@@ -147,15 +147,11 @@ class AgentOrchestrator:
         session_id: Optional[str] = None,
     ) -> AsyncGenerator[str, None]:
         """
-        处理用户查询（流式输出）
-
-        返回一个异步生成器，按行输出 JSON 字符串：
-        - 第一行: {\"type\":\"meta\",\"conversation_id\":...}
-        - 后续多行: {\"type\":\"delta\",\"text\":...}
-        - 结束行: {\"type\":\"end\"}
+        处理用户查询（流式输出 + 知识提炼）
         """
         logger.info(f"[stream] 开始处理查询: query={query[:50]}...")
-        logger.info("[stream] 识别意图...")
+        
+        # 1. 意图识别
         intent = await self.intent_router.route(query)
         logger.info(f"[stream] 识别结果: {intent.value}")
 
@@ -165,73 +161,142 @@ class AgentOrchestrator:
             "parent_id": parent_id,
         }
 
-        # 生成对话 ID，并提前下发给前端
+        # 生成对话 ID
         conversation_id = str(uuid.uuid4())
-        logger.info(f"[stream] 生成对话 ID: {conversation_id}")
-
-        # 缓存完整回答，用于流结束后写入 Neo4j
-        answer_parts: list[str] = []
-
-        # 首包：meta 信息
-        meta_payload = {"type": "meta", "conversation_id": conversation_id}
-        yield json.dumps(meta_payload, ensure_ascii=False) + "\n"
+        
+        answer_parts = [] 
+       
+        # 发送 Meta 信息
+        yield json.dumps({"type": "meta", "conversation_id": conversation_id}, ensure_ascii=False) + "\n"
 
         try:
-            # 调用策略的流式接口
-            async for delta in strategy.process_stream(query, context):  # type: ignore[attr-defined]
+            # 2. 流式生成回答
+            async for delta in strategy.process_stream(query, context):
                 if not delta:
                     continue
+                
+                # 收集回答片段
                 answer_parts.append(delta)
+                
+                # 发送给前端
                 payload = {"type": "delta", "text": delta}
                 yield json.dumps(payload, ensure_ascii=False) + "\n"
+                
         except Exception as e:
             logger.error("[stream] LLM 流式生成失败: %s", str(e), exc_info=True)
-            error_payload = {"type": "error", "message": str(e)}
-            yield json.dumps(error_payload, ensure_ascii=False) + "\n"
+            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+            return # 出错就直接结束，不进行后续提炼
+            
         finally:
-            # 结束标记
+            # 发送结束标记
             yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
 
-            # 在后台保存到 Neo4j（降级模式）
-            full_answer = "".join(answer_parts)
-            logger.info("[stream] 开始保存流式回答到 Neo4j...")
+        # ==========================================
+        # 3. 后处理：AI 知识提炼 (Concept Extraction)
+        # ==========================================
+        full_answer = "".join(answer_parts)
+        
+        if not full_answer:
+            return
+
+        logger.info("[stream] 回答结束，开始进行知识提炼...")
+
+        try:
+            # A. 调用 LLM 总结结构
+            extraction_prompt = f"""
+            基于以下问答，提炼出一个核心概念节点和3-5个关键子概念节点。
+            
+            问题: {query}
+            回答: {full_answer}
+            
+            请严格只返回 JSON 格式，不要包含 Markdown 标记。格式如下：
+            {{
+                "root": "核心概念(简短名词)",
+                "children": ["子概念1", "子概念2", "子概念3"]
+            }}
+            """
+            
+            summary_res = await self.llm.acomplete(extraction_prompt)
+            summary_text = summary_res.text if hasattr(summary_res, 'text') else str(summary_res)
+            
+            # 清理 JSON 字符串
+            summary_text = summary_text.replace("```json", "").replace("```", "").strip()
+            
+            # 解析 JSON
             try:
-                user_node_id = f"{conversation_id}_user"
-                await neo4j_client.save_dialogue_node(
-                    node_id=user_node_id,
-                    user_id=user_id,
-                    role="user",
-                    content=query,
-                    intent=intent.value if intent else None,
+                structure = json.loads(summary_text)
+                root_label = structure.get("root", "核心概念")
+                children = structure.get("children", [])
+            except json.JSONDecodeError:
+                logger.warning("知识提炼 JSON 解析失败，使用默认值")
+                root_label = query[:10]
+                children = []
+
+            logger.info(f"提炼成功: Root={root_label}, Children={children}")
+
+            # B. 存 Root 节点 (问题 + 回答 + Root Title)
+            user_node_id = f"{conversation_id}_root"
+            
+            # 存 Root (Title = 核心概念, Type = root)
+            await neo4j_client.save_dialogue_node(
+                node_id=user_node_id,
+                user_id=user_id,
+                role="user",
+                content=query, # 节点内容还是存完整问题
+                title=root_label, #  标题存 AI 提炼的核心词
+                type="root"       #  类型标记为 root
+            )
+
+            # C. 存 AI 回答节点 (详情)
+            ai_node_id = conversation_id
+            await neo4j_client.save_dialogue_node(
+                node_id=ai_node_id,
+                user_id=user_id,
+                role="assistant",
+                content=full_answer,
+                title="详细解释",
+                type="explanation"
+            )
+            # 连线: Root -> Explanation
+            await neo4j_client.link_dialogue_nodes(user_node_id, ai_node_id)
+            
+            # D. 存关键子概念 (Keywords)
+            for child_concept in children:
+                child_id = str(uuid.uuid4())
+                
+                # 使用 query 方法直接创建子节点和连线
+                await neo4j_client.query(
+                    """
+                    MATCH (root:DialogueNode {node_id: $root_id})
+                    CREATE (child:DialogueNode {
+                        node_id: $child_id,
+                        user_id: $user_id,
+                        content: $name,
+                        title: $name,
+                        type: 'keyword',
+                        timestamp: datetime()
+                    })
+                    CREATE (root)-[:HAS_KEYWORD]->(child)
+                    """,
+                    {
+                        "root_id": user_node_id,
+                        "child_id": child_id,
+                        "user_id": user_id,
+                        "name": child_concept
+                    }
                 )
 
-                ai_node_id = conversation_id
-                await neo4j_client.save_dialogue_node(
-                    node_id=ai_node_id,
-                    user_id=user_id,
-                    role="assistant",
-                    content=full_answer,
-                    intent=intent.value if intent else None,
-                )
+            logger.info("[stream] 知识图谱构建完成")
 
-                await neo4j_client.link_dialogue_nodes(
-                    parent_node_id=user_node_id,
-                    child_node_id=ai_node_id,
-                )
-
-                if parent_id:
-                    logger.info("[stream] 创建父节点关系: parent_id=%s", parent_id)
-                    await neo4j_client.link_dialogue_nodes(
-                        parent_node_id=parent_id,
-                        child_node_id=user_node_id,
-                    )
-                logger.info("[stream] Neo4j 保存成功")
-            except Exception as e:
-                logger.warning(
-                    "[stream] 保存流式对话到 Neo4j 失败（已降级处理）: %s",
-                    str(e),
-                    exc_info=True,
-                )
+        except Exception as e:
+            logger.error(f"知识提炼失败: {e}", exc_info=True)
+            # 降级：仅保存基本的问答对
+            try:
+                await neo4j_client.save_dialogue_node(f"{conversation_id}_user", user_id, "user", query, title="问题")
+                await neo4j_client.save_dialogue_node(conversation_id, user_id, "assistant", full_answer, title="回答")
+                await neo4j_client.link_dialogue_nodes(f"{conversation_id}_user", conversation_id)
+            except Exception as e2:
+                 logger.error(f"降级保存也失败了: {e2}")
 
     async def process_recursive_query(
         self,
