@@ -52,10 +52,6 @@ async def chat(
                 parent_id=request.parent_id or "",
                 fragment_id=request.ref_fragment_id,
                 query=request.query,
-<<<<<<< HEAD
-                selected_text=request.selected_text,
-=======
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
             )
             logger.info("递归追问处理完成，conversation_id=%s", response.conversation_id)
             # 为兼容前端流式消费，这里也返回单条 JSON 行
