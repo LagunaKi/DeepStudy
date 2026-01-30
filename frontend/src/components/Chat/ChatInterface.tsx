@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { authAPI, chatAPI, mindMapAPI } from '../../services/api'
 import { AgentResponse, MindMapGraph } from '../../types/api'
@@ -11,6 +11,7 @@ const ChatInterface = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   
   const [messages, setMessages] = useState<AgentResponse[]>([])
   const [userMessages, setUserMessages] = useState<string[]>([])
@@ -20,6 +21,8 @@ const ChatInterface = () => {
   const [error, setError] = useState<string>('')
   const [mindMapData, setMindMapData] = useState<MindMapGraph>({ nodes: [], edges: [] })
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+  const [sidebarWidth, setSidebarWidth] = useState<number>(400) // 侧边栏宽度
+  const [isResizing, setIsResizing] = useState<boolean>(false) // 是否正在调整大小
   const [sessionId] = useState<string>(() => `session_${Date.now()}`)
 
   // ==========================================
@@ -192,6 +195,52 @@ const ChatInterface = () => {
     navigate('/login')
   }
 
+  // ==========================================
+  // 👇👇👇 拖拽调整大小逻辑 👇👇👇
+  // ==========================================
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    e.preventDefault()
+    setIsResizing(true)
+  }
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isResizing || !containerRef.current) return
+    
+    const containerRect = containerRef.current.getBoundingClientRect()
+    const newWidth = containerRect.right - e.clientX - 16 // 16px 是右侧 margin
+    
+    // 设置最小和最大宽度限制
+    const minWidth = 300
+    const maxWidth = containerRect.width * 0.6 // 最多占 60% 宽度
+    
+    if (newWidth >= minWidth && newWidth <= maxWidth) {
+      setSidebarWidth(newWidth)
+    }
+  }, [isResizing])
+
+  const handleMouseUp = useCallback(() => {
+    setIsResizing(false)
+  }, [])
+
+  useEffect(() => {
+    if (isResizing) {
+      document.addEventListener('mousemove', handleMouseMove)
+      document.addEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = 'col-resize'
+      document.body.style.userSelect = 'none'
+      
+      return () => {
+        document.removeEventListener('mousemove', handleMouseMove)
+        document.removeEventListener('mouseup', handleMouseUp)
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+    }
+  }, [isResizing, handleMouseMove, handleMouseUp])
+
+  // ==========================================
+
   // 样式定义
   const containerStyle: React.CSSProperties = {
     position: 'relative',
@@ -220,7 +269,7 @@ const ChatInterface = () => {
 
   // 👇👇👇 修复核心：显式指定高度，强制撑开！ 👇👇👇
   const mainAreaStyle: React.CSSProperties = {
-    flex: 1,
+    flex: sidebarOpen ? `0 0 calc(100% - ${sidebarWidth + 48}px)` : '1', // 48px 是 margin 总和
     display: 'flex',
     flexDirection: 'column',
     backgroundColor: 'rgba(255, 255, 255, 0.8)',
@@ -230,7 +279,9 @@ const ChatInterface = () => {
     overflow: 'hidden',
     position: 'relative',
     zIndex: 1,
-    height: 'calc(100vh - 32px)' // 👈 这一行是救命稻草！
+    height: 'calc(100vh - 32px)', // 👈 这一行是救命稻草！
+    minWidth: 0, // 允许收缩
+    transition: sidebarOpen && !isResizing ? 'flex 0.3s' : 'none', // 只在关闭时过渡，调整大小时不过渡
   }
 
   const headerStyle: React.CSSProperties = {
@@ -322,10 +373,10 @@ const ChatInterface = () => {
   }
 
   const sidebarStyle: React.CSSProperties = {
-    width: sidebarOpen ? '400px' : '0',
+    width: sidebarOpen ? `${sidebarWidth}px` : '0',
     borderLeft: sidebarOpen ? '1px solid #E5E7EB' : 'none',
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    transition: 'width 0.3s',
+    transition: isResizing ? 'none' : 'width 0.3s, border 0.3s', // 调整大小时不过渡
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
@@ -335,6 +386,18 @@ const ChatInterface = () => {
     position: 'relative',
     zIndex: 1,
     height: 'calc(100vh - 32px)' // 侧边栏也加上这个高度，保持对齐
+  }
+
+  const resizerStyle: React.CSSProperties = {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    bottom: 0,
+    width: '4px',
+    backgroundColor: 'transparent',
+    cursor: 'col-resize',
+    zIndex: 10,
+    transition: 'background-color 0.2s',
   }
 
   const errorStyle: React.CSSProperties = {
@@ -347,7 +410,7 @@ const ChatInterface = () => {
   }
 
   return (
-    <div style={containerStyle}>
+    <div style={containerStyle} ref={containerRef}>
       <div style={backgroundStyle} />
 
       <div style={mainAreaStyle}>
@@ -493,6 +556,22 @@ const ChatInterface = () => {
 
       {sidebarOpen && (
         <div style={sidebarStyle}>
+          {/* 可拖拽的分隔条 */}
+          <div
+            style={isResizing ? { ...resizerStyle, backgroundColor: '#2563EB' } : resizerStyle}
+            onMouseDown={handleMouseDown}
+            onMouseEnter={(e) => {
+              if (!isResizing) {
+                e.currentTarget.style.backgroundColor = '#E5E7EB'
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!isResizing) {
+                e.currentTarget.style.backgroundColor = 'transparent'
+              }
+            }}
+          />
+          
           <div style={{
             padding: '16px',
             borderBottom: '1px solid #E5E7EB',
@@ -519,7 +598,7 @@ const ChatInterface = () => {
               ×
             </button>
           </div>
-          <div style={{ flex: 1, padding: '16px' }}>
+          <div style={{ flex: 1, padding: '16px', overflow: 'hidden' }}>
             <KnowledgeGraph data={mindMapData} />
           </div>
         </div>

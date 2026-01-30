@@ -20,7 +20,11 @@ class VectorStoreManager:
     """
     
     def __init__(self):
-        self.persist_dir = "./local_storage"
+        # 使用配置文件中的路径
+        self.persist_dir = settings.VECTOR_STORE_PATH
+        # 确保目录存在
+        if not os.path.exists(self.persist_dir):
+            os.makedirs(self.persist_dir, exist_ok=True)
         
         # 1. 配置大脑 (LLM) -> 指向 ModelScope
         model_scope_llm = OpenAI(
@@ -38,12 +42,14 @@ class VectorStoreManager:
         )
         
         # 3. 初始化/加载索引 (记忆库)
-        if not os.path.exists(self.persist_dir):
-            #print("VectorStore] 本地为空，正在初始化新知识库...")
+        # 检查是否已有索引文件（通过检查目录中是否有特定文件来判断）
+        index_exists = os.path.exists(self.persist_dir) and os.listdir(self.persist_dir)
+        if not index_exists:
+            # 初始化新知识库
             self.index = VectorStoreIndex.from_documents([])
             self.index.storage_context.persist(persist_dir=self.persist_dir)
         else:
-            #print("[VectorStore] 发现本地记忆，正在加载...")
+            # 加载已有索引
             storage_context = StorageContext.from_defaults(persist_dir=self.persist_dir)
             self.index = load_index_from_storage(storage_context)
 
