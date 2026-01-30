@@ -23,4 +23,8 @@ class ChatRequest(BaseModel):
     query: str = Field(..., min_length=1, description="用户输入的问题")
     parent_id: Optional[str] = Field(None, description="当前所在节点的 ID，首次提问可为空")
     ref_fragment_id: Optional[str] = Field(None, description="如果是划词追问，需带上片段 ID")
+<<<<<<< HEAD
+    selected_text: Optional[str] = Field(None, description="如果是划词追问，需带上选中的文本")
+=======
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
     session_id: str = Field(..., description="会话 ID，区分不同学习主题")

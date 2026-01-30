@@ -95,11 +95,14 @@ const Login = () => {
     transition: 'border-color 0.2s',
   }
 
+<<<<<<< HEAD
+=======
   const inputFocusStyle: React.CSSProperties = {
     borderColor: '#2563EB',
     boxShadow: '0 0 0 3px rgba(37, 99, 235, 0.1)',
   }
 
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
   const errorStyle: React.CSSProperties = {
     color: '#EF4444',
     backgroundColor: '#FEE2E2',
@@ -123,10 +126,13 @@ const Login = () => {
     transition: 'background-color 0.2s',
   }
 
+<<<<<<< HEAD
+=======
   const buttonHoverStyle: React.CSSProperties = {
     backgroundColor: '#1D4ED8',
   }
 
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
   const footerStyle: React.CSSProperties = {
     marginTop: '16px',
     textAlign: 'center',

@@ -10,12 +10,21 @@ class Settings(BaseSettings):
     """应用配置"""
     
     # ModelScope API 配置
+<<<<<<< HEAD
+    MODELSCOPE_API_KEY: str
+    MODELSCOPE_API_BASE: str = "https://api.modelscope.cn/v1"
+    
+    # 模型选择
+    MODEL_NAME: str = "qwen2.5-72b-instruct"
+    CODER_MODEL_NAME: str = "qwen2.5-coder-7b-instruct"
+=======
     MODELSCOPE_API_KEY: str = "ms-9b769e50-465c-4108-b47e-dc40e7bf22fd" 
     MODELSCOPE_API_BASE: str = "https://api-inference.modelscope.cn/v1"
     
     # 模型选择
     MODEL_NAME: str = "Qwen/Qwen2.5-72B-Instruct"
     CODER_MODEL_NAME: str = "Qwen/Qwen2.5-Coder-32B-Instruct"
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
     
     # Neo4j 配置
     NEO4J_URI: str = "bolt://localhost:7687"
