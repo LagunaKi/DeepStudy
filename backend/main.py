@@ -5,12 +5,20 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
+<<<<<<< HEAD
+# from backend.api.routes import auth, chat, mindmap
+from backend.api.routes import auth, chat, mindmap
+from backend.data.sqlite_db import init_db
+import asyncio
+
+=======
 from backend.api.routes import auth, chat, mindmap, knowledge
 from backend.api.routes import auth, chat
 from backend.data.sqlite_db import init_db
 import asyncio
 
 
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
 # 配置日志
 logging.basicConfig(
     level=logging.INFO,
@@ -26,8 +34,11 @@ app = FastAPI(
     version="0.1.0"
 )
 
+<<<<<<< HEAD
+=======
 app.include_router(knowledge.router)
 
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
 # 配置 CORS
 import json
 cors_origins = json.loads(settings.CORS_ORIGINS) if isinstance(settings.CORS_ORIGINS, str) else settings.CORS_ORIGINS

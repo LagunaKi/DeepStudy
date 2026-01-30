@@ -2,7 +2,11 @@
  * ReactFlow 相关类型扩展
  */
 import { Node, Edge } from 'reactflow'
+<<<<<<< HEAD
+import { MindMapNode } from './api'
+=======
 import { MindMapNode, MindMapEdge } from './api'
+>>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
 
 /**
  * 扩展的 ReactFlow Node 类型
