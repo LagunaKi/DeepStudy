@@ -9,16 +9,6 @@
         "lint": "eslint . --ext ts,tsx --report-unused-disable-directives --max-warnings 0"
     },
     "dependencies": {
-<<<<<<< HEAD
-        "axios": "^1.6.2",
-        "katex": "^0.16.9",
-        "react": "^18.2.0",
-        "react-dom": "^18.2.0",
-        "react-markdown": "^9.0.1",
-        "react-router-dom": "^6.20.1",
-        "reactflow": "^11.10.1",
-        "rehype-katex": "^7.0.0",
-=======
         "@types/dagre": "^0.7.53",
         "axios": "^1.6.2",
         "dagre": "^0.8.5",
@@ -29,7 +19,6 @@
         "react-router-dom": "^6.20.1",
         "reactflow": "^11.10.1",
         "rehype-katex": "^7.0.1",
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
         "remark-gfm": "^4.0.0",
         "remark-math": "^6.0.0"
     },
@@ -44,10 +33,6 @@
         "eslint-plugin-react-hooks": "^4.6.0",
         "eslint-plugin-react-refresh": "^0.4.5",
         "typescript": "^5.2.2",
-<<<<<<< HEAD
-        "vite": "^7.3.1"
-=======
         "vite": "^5.0.8"
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
     }
 }

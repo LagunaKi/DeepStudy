@@ -128,27 +128,13 @@ export const chatAPI = {
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
 
-<<<<<<< HEAD
-    let reading = true
-    while (reading) {
-      const { done, value } = await reader.read()
-      if (done) {
-        reading = false
-        break
-      }
-      buffer += decoder.decode(value, { stream: true })
-
-      let index: number
-      // 按行拆分 JSON（后端以 \n 作为分隔符）
-=======
     while (true) {
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
 
       let index: number
-      // 按行拆分 JSON（后端以 \\n 作为分隔符）
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
+      // 按行拆分 JSON（后端以 \n 作为分隔符）
       while ((index = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, index).trim()
         buffer = buffer.slice(index + 1)
@@ -158,10 +144,7 @@ export const chatAPI = {
           onChunk(payload)
         } catch (e) {
           // 忽略单行解析错误，避免中断整个流
-<<<<<<< HEAD
-=======
           // eslint-disable-next-line no-console
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
           console.warn('解析流式数据失败:', e, line)
         }
       }
@@ -174,14 +157,9 @@ export const chatAPI = {
         const payload = JSON.parse(rest)
         onChunk(payload)
       } catch (e) {
-<<<<<<< HEAD
-          console.warn('解析流式数据失败(尾部):', e, rest)
-        }
-=======
         // eslint-disable-next-line no-console
         console.warn('解析流式数据失败(尾部):', e, rest)
       }
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
     }
   },
 

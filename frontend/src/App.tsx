@@ -1,18 +1,11 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
-<<<<<<< HEAD
 import { ReactFlowProvider } from 'reactflow'
-=======
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
 import Login from './components/Auth/Login'
 import Register from './components/Auth/Register'
 import ChatInterface from './components/Chat/ChatInterface'
 import './App.css'
-<<<<<<< HEAD
-=======
 import 'katex/dist/katex.min.css'
-
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
 
 /**
  * 应用主组件
@@ -56,7 +49,6 @@ function App() {
   }
 
   return (
-<<<<<<< HEAD
     <ReactFlowProvider>
       <div className="app-background">
         <div className="app-content">
@@ -73,22 +65,6 @@ function App() {
         </div>
       </div>
     </ReactFlowProvider>
-=======
-    <div className="app-background">
-      <div className="app-content">
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/register" element={<Register />} />
-          <Route
-            path="/"
-            element={
-              authenticated ? <ChatInterface /> : <Navigate to="/login" replace />
-            }
-          />
-        </Routes>
-      </div>
-    </div>
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
   )
 }
 

@@ -44,41 +44,24 @@ async def chat(
         orchestrator = AgentOrchestrator()
         logger.info("Orchestrator 初始化成功")
 
-        # 暂时对普通提问走流式，对划词追问走非流式一次性返回
+        # 统一使用流式输出
         if request.ref_fragment_id:
-            logger.info("处理划词追问（非流式）...")
-            response = await orchestrator.process_recursive_query(
+            logger.info("处理划词追问（流式）...")
+            token_stream = orchestrator.process_recursive_query_stream(
                 user_id=user_id,
                 parent_id=request.parent_id or "",
                 fragment_id=request.ref_fragment_id,
                 query=request.query,
-<<<<<<< HEAD
                 selected_text=request.selected_text,
-=======
->>>>>>> b719fdcda5e46ee55a08988e23b2acd7d6544c45
             )
-            logger.info("递归追问处理完成，conversation_id=%s", response.conversation_id)
-            # 为兼容前端流式消费，这里也返回单条 JSON 行
-            async def single_chunk():
-                import json as _json
-
-                payload = {
-                    "type": "full",
-                    "answer": response.answer,
-                    "conversation_id": response.conversation_id,
-                    "parent_id": response.parent_id,
-                }
-                yield _json.dumps(payload, ensure_ascii=False) + "\n"
-
-            return StreamingResponse(single_chunk(), media_type="application/json")
-
-        logger.info("处理普通提问（流式）...")
-        token_stream = orchestrator.process_query_stream(
-            user_id=user_id,
-            query=request.query,
-            parent_id=request.parent_id,
-            session_id=request.session_id,
-        )
+        else:
+            logger.info("处理普通提问（流式）...")
+            token_stream = orchestrator.process_query_stream(
+                user_id=user_id,
+                query=request.query,
+                parent_id=request.parent_id,
+                session_id=request.session_id,
+            )
 
         return StreamingResponse(token_stream, media_type="application/json")
     except HTTPException:
