@@ -168,17 +168,42 @@ const ChatInterface = () => {
       )
 
       // 流结束后，如果拿到了 conversation_id，则刷新思维导图
+      // 延迟查询，等待 Neo4j 保存完成，并添加重试机制
       if (currentConversationId) {
-        try {
-          const graphData = await mindMapAPI.getMindMap(currentConversationId)
-          if (graphData && graphData.nodes && graphData.nodes.length > 0) {
-            setMindMapData(graphData)
-            if (!sidebarOpen) setSidebarOpen(true)
+        // 延迟 1 秒，给 Neo4j 保存留出时间
+        setTimeout(async () => {
+          try {
+            // 最多重试 3 次
+            let retries = 3
+            let graphData = null
+            
+            while (retries > 0) {
+              try {
+                graphData = await mindMapAPI.getMindMap(currentConversationId)
+                if (graphData && graphData.nodes && graphData.nodes.length > 0) {
+                  setMindMapData(graphData)
+                  if (!sidebarOpen) setSidebarOpen(true)
+                  break // 成功获取数据，退出重试循环
+                }
+              } catch (err) {
+                console.warn(`思维导图加载失败 (剩余重试 ${retries - 1} 次):`, err)
+              }
+              
+              retries--
+              if (retries > 0 && (!graphData || graphData.nodes.length === 0)) {
+                // 等待 500ms 后重试
+                await new Promise(resolve => setTimeout(resolve, 500))
+              }
+            }
+            
+            if (!graphData || graphData.nodes.length === 0) {
+              console.warn('思维导图加载失败：重试 3 次后仍无数据')
+            }
+          } catch (err) {
+            // 思维导图加载失败不影响主流程
+            console.warn('思维导图加载失败:', err)
           }
-        } catch (err) {
-          // 思维导图加载失败不影响主流程
-          console.warn('思维导图加载失败:', err)
-        }
+        }, 1000) // 延迟 1 秒
       }
     } catch (error: any) {
       console.error('发送消息失败:', error)

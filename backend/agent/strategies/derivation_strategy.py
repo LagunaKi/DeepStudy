@@ -48,3 +48,30 @@ class DerivationStrategy(BaseStrategy):
             conversation_id="",  # 由 orchestrator 生成
             parent_id=context.get("parent_id") if context else None
         )
+
+    async def process_stream(
+        self,
+        query: str,
+        context: dict = None
+    ):
+        """
+        推导型问题流式处理
+        
+        返回一个异步生成器，逐步产生回答文本。
+        """
+        # 构建提示词，如果有父对话上下文则注入
+        if context and context.get("parent_context"):
+            parent_context = context["parent_context"]
+            prompt = f"""{self.system_prompt}
+
+之前的对话：
+{parent_context[:500]}...
+
+当前问题: {query}
+
+请基于之前的对话上下文，详细解释推导过程："""
+        else:
+            prompt = f"{self.system_prompt}\n\n问题: {query}\n\n请详细解释推导过程："
+        
+        async for delta in self.llm.astream(prompt):
+            yield delta

@@ -128,13 +128,37 @@ const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({ data, onNodeClick }) =>
 
       setNodes(layoutedNodes);
       setEdges(
-        layoutedEdges.map((edge: any) => ({
-          ...edge,
-          type: 'smoothstep',
-          animated: true,
-          style: { stroke: '#b0bec5' },
-          markerEnd: { type: MarkerType.ArrowClosed, color: '#b0bec5' },
-        }))
+        layoutedEdges.map((edge: any) => {
+          // 根据关系类型设置不同的样式
+          const relType = edge.label || '';
+          const isKeyword = relType === 'HAS_KEYWORD';
+          const isChild = relType === 'HAS_CHILD';
+          
+          // HAS_CHILD: 实线，较粗，主色（蓝色）
+          // HAS_KEYWORD: 虚线，较细，辅助色（灰色）
+          const edgeStyle = isKeyword
+            ? {
+                stroke: '#9e9e9e',
+                strokeWidth: 1.5,
+                strokeDasharray: '5,5', // 虚线
+              }
+            : {
+                stroke: '#64b5f6', // 蓝色
+                strokeWidth: 2.5, // 较粗
+              };
+          
+          return {
+            ...edge,
+            type: 'smoothstep',
+            animated: true,
+            label: '', // 隐藏标签，通过样式区分
+            style: edgeStyle,
+            markerEnd: { 
+              type: MarkerType.ArrowClosed, 
+              color: isKeyword ? '#9e9e9e' : '#64b5f6' 
+            },
+          };
+        })
       );
     }
   }, [data, setNodes, setEdges]);

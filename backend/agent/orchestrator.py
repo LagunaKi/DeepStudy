@@ -168,7 +168,21 @@ class AgentOrchestrator:
         """
         logger.info(f"[stream] 开始处理查询: query={query[:50]}...")
         
-        # 1. 意图识别
+        # 1. 获取父对话上下文（如果存在）
+        parent_context = ""
+        if parent_id:
+            try:
+                logger.info(f"[stream] 获取父对话上下文: parent_id={parent_id}")
+                parent_node = await neo4j_client.get_dialogue_node(parent_id)
+                if parent_node and parent_node.get('content'):
+                    parent_context = parent_node['content']
+                    logger.info(f"[stream] 成功获取父对话上下文，长度: {len(parent_context)}")
+                else:
+                    logger.warning("[stream] 无法获取父对话上下文，节点不存在或内容为空")
+            except Exception as e:
+                logger.warning(f"[stream] 获取父对话上下文失败: {str(e)}")
+
+        # 2. 意图识别
         intent = await self.intent_router.route(query)
         logger.info(f"[stream] 识别结果: {intent.value}")
 
@@ -176,6 +190,7 @@ class AgentOrchestrator:
         context = {
             "user_id": user_id,
             "parent_id": parent_id,
+            "parent_context": parent_context,  # 新增：父对话内容
         }
 
         # 生成对话 ID，并提前下发给前端

@@ -52,6 +52,19 @@ class ConceptStrategy(BaseStrategy):
         
         返回一个异步生成器，逐步产生回答文本。
         """
-        prompt = f"{self.system_prompt}\n\n问题: {query}\n\n请详细解释这个概念："
+        # 构建提示词，如果有父对话上下文则注入
+        if context and context.get("parent_context"):
+            parent_context = context["parent_context"]
+            prompt = f"""{self.system_prompt}
+
+之前的对话：
+{parent_context[:500]}...
+
+当前问题: {query}
+
+请基于之前的对话上下文，详细解释这个概念："""
+        else:
+            prompt = f"{self.system_prompt}\n\n问题: {query}\n\n请详细解释这个概念："
+        
         async for delta in self.llm.astream(prompt):  # type: ignore[attr-defined]
             yield delta
