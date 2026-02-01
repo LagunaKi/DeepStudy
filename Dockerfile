@@ -1,20 +1,26 @@
 FROM modelscope-registry.cn-beijing.cr.aliyuncs.com/modelscope-repo/python:3.10
 
+# 配置 Debian 镜像源（使用 trusted=yes + 完全禁用 GPG 验证）
 RUN echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm main" > /etc/apt/sources.list && \
     echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm-updates main" >> /etc/apt/sources.list && \
     echo "deb [trusted=yes] https://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list && \
-    # 清理旧的 sources.list.d 配置，避免冲突
-    rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true
-# 安装系统依赖
-RUN apt-get update && \
-    apt-get install -y --fix-missing \
+    # 清理所有旧的源配置
+    rm -rf /etc/apt/sources.list.d/* 2>/dev/null || true && \
+    # 配置 APT 选项：完全禁用 GPG 验证
+    echo 'APT::Get::AllowUnauthenticated "true";' > /etc/apt/apt.conf.d/99allow-unauthenticated && \
+    echo 'Acquire::AllowInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99allow-unauthenticated && \
+    echo 'Acquire::Check-Valid-Until "false";' >> /etc/apt/apt.conf.d/99allow-unauthenticated
+
+# 安装系统依赖（使用 --allow-unauthenticated 确保安装成功）
+RUN apt-get update --allow-insecure-repositories && \
+    apt-get install -y --allow-unauthenticated --fix-missing \
     wget \
     curl \
     gnupg \
     ca-certificates \
     tar \
-    && apt-get update && \
-    apt-get install -y --fix-missing \
+    && apt-get update --allow-insecure-repositories && \
+    apt-get install -y --allow-unauthenticated --fix-missing \
     nginx \
     nodejs \
     npm \
