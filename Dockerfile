@@ -11,7 +11,7 @@ RUN echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm main" > 
     echo 'Acquire::AllowInsecureRepositories "true";' >> /etc/apt/apt.conf.d/99allow-unauthenticated && \
     echo 'Acquire::Check-Valid-Until "false";' >> /etc/apt/apt.conf.d/99allow-unauthenticated
 
-# 安装系统依赖（使用 --allow-unauthenticated 确保安装成功）
+# 安装基础系统依赖（不包括 nodejs/npm）
 RUN apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
     apt-get update --allow-insecure-repositories && \
@@ -21,12 +21,21 @@ RUN apt-get clean && \
     gnupg \
     ca-certificates \
     tar \
+    xz-utils \
     nginx \
-    nodejs \
-    npm \
     netcat-openbsd \
     && apt-get clean && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
+
+# 安装 Node.js（直接下载官方二进制包，避免 apt 依赖）
+RUN NODE_VERSION="20.11.0" && \
+    wget "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" -O /tmp/node.tar.xz && \
+    tar -xJf /tmp/node.tar.xz -C /opt && \
+    mv /opt/node-v${NODE_VERSION}-linux-x64 /opt/node && \
+    ln -s /opt/node/bin/node /usr/local/bin/node && \
+    ln -s /opt/node/bin/npm /usr/local/bin/npm && \
+    ln -s /opt/node/bin/npx /usr/local/bin/npx && \
+    rm /tmp/node.tar.xz
 
 # 安装 Java 21
 RUN apt-get update && \
