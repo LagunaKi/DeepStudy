@@ -29,7 +29,7 @@ wheels/
 *.sqlite3
 
 # Environment variables
-.env
+# .env
 .env.local
 
 # IDE
