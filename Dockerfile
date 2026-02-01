@@ -12,20 +12,21 @@ RUN echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm main" > 
     echo 'Acquire::Check-Valid-Until "false";' >> /etc/apt/apt.conf.d/99allow-unauthenticated
 
 # 安装系统依赖（使用 --allow-unauthenticated 确保安装成功）
-RUN apt-get update --allow-insecure-repositories && \
-    apt-get install -y --allow-unauthenticated --fix-missing \
+RUN apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/* && \
+    apt-get update --allow-insecure-repositories && \
+    apt-get install -y --allow-unauthenticated --no-install-recommends --fix-missing \
     wget \
     curl \
     gnupg \
     ca-certificates \
     tar \
-    && apt-get update --allow-insecure-repositories && \
-    apt-get install -y --allow-unauthenticated --fix-missing \
     nginx \
     nodejs \
     npm \
     netcat-openbsd \
-    && rm -rf /var/lib/apt/lists/*
+    && apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/archives/*
 
 # 安装 Java 21
 RUN apt-get update && \
