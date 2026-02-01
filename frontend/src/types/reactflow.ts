@@ -2,7 +2,12 @@
  * ReactFlow 相关类型扩展
  */
 import { Node, Edge } from 'reactflow'
-import { MindMapNode, MindMapEdge } from './api'
+import { MindMapGraph } from './api'
+
+/**
+ * 从 MindMapGraph 中提取节点和边的类型
+ */
+type MindMapNode = MindMapGraph['nodes'][number]
 
 /**
  * 扩展的 ReactFlow Node 类型
