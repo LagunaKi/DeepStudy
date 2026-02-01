@@ -1,18 +1,10 @@
 FROM modelscope-registry.cn-beijing.cr.aliyuncs.com/modelscope-repo/python:3.10
 
-# 配置 Debian 镜像源（更健壮的方法）
-RUN if [ -f /etc/apt/sources.list ]; then \
-        sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' /etc/apt/sources.list && \
-        sed -i 's|http://security.debian.org|https://mirrors.aliyun.com/debian-security|g' /etc/apt/sources.list; \
-    else \
-        echo "deb https://mirrors.aliyun.com/debian/ bookworm main" > /etc/apt/sources.list && \
-        echo "deb https://mirrors.aliyun.com/debian/ bookworm-updates main" >> /etc/apt/sources.list && \
-        echo "deb https://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list; \
-    fi && \
-    # 同时处理 sources.list.d 中的文件
-    find /etc/apt/sources.list.d/ -name "*.list" -type f -exec sed -i 's|http://deb.debian.org|https://mirrors.aliyun.com|g' {} \; 2>/dev/null || true && \
-    find /etc/apt/sources.list.d/ -name "*.list" -type f -exec sed -i 's|http://security.debian.org|https://mirrors.aliyun.com/debian-security|g' {} \; 2>/dev/null || true
-
+RUN echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm main" > /etc/apt/sources.list && \
+    echo "deb [trusted=yes] https://mirrors.aliyun.com/debian/ bookworm-updates main" >> /etc/apt/sources.list && \
+    echo "deb [trusted=yes] https://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list && \
+    # 清理旧的 sources.list.d 配置，避免冲突
+    rm -f /etc/apt/sources.list.d/*.list 2>/dev/null || true
 # 安装系统依赖
 RUN apt-get update && \
     apt-get install -y --fix-missing \
