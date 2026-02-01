@@ -6,7 +6,6 @@ import ReactFlow, {
   useNodesState,
   useEdgesState,
   MarkerType,
-  ConnectionLineType,
   Position,
 } from 'reactflow';
 import dagre from 'dagre';
@@ -132,7 +131,6 @@ const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({ data, onNodeClick }) =>
           // 根据关系类型设置不同的样式
           const relType = edge.label || '';
           const isKeyword = relType === 'HAS_KEYWORD';
-          const isChild = relType === 'HAS_CHILD';
           
           // HAS_CHILD: 实线，较粗，主色（蓝色）
           // HAS_KEYWORD: 虚线，较细，辅助色（灰色）
@@ -165,7 +163,7 @@ const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({ data, onNodeClick }) =>
 
   // 处理节点点击
   const handleNodeClick = useCallback(
-    (event: React.MouseEvent, node: any) => {
+    (_event: React.MouseEvent, node: any) => {
       if (onNodeClick) {
         onNodeClick(node.id);
       }
