@@ -41,11 +41,11 @@ cd /home/user/app
 # 添加 --proxy-headers 以正确处理代理头
 python -u -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*' &
 
-# 等待后端启动
-sleep 5
+# 等待后端启动（加载 embedding 模型需要较长时间）
+sleep 10
 
-# 检查后端是否启动成功
-max_attempts=10
+# 检查后端是否启动成功（增加等待时间到60秒）
+max_attempts=30
 attempt=0
 backend_ready=false
 while [ $attempt -lt $max_attempts ]; do
@@ -55,7 +55,7 @@ while [ $attempt -lt $max_attempts ]; do
         break
     fi
     echo "Waiting for backend... (attempt $((attempt + 1))/$max_attempts)"
-    sleep 1
+    sleep 2
     attempt=$((attempt + 1))
 done
 
