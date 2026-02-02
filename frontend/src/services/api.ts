@@ -33,7 +33,7 @@ apiClient.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('access_token')
     if (token) {
-      config.headers.Authorization = `Bearer ${token}`
+      config.headers['X-Auth-Token'] = token
     }
     return config
   },
@@ -115,7 +115,7 @@ export const chatAPI = {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { 'X-Auth-Token': token } : {}),
       },
       body: JSON.stringify(data),
     })

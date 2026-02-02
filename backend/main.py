@@ -29,11 +29,19 @@ from fastapi import Request
 async def log_request_headers(request: Request, call_next):
     # 打印关键 Header 信息
     auth_header = request.headers.get("authorization")
+    x_auth_token = request.headers.get("x-auth-token")
+    
     logger.info(f"Incoming Request: {request.method} {request.url.path}")
+    
     if auth_header:
         logger.info(f"Authorization Header: Present (Starts with {auth_header[:10]}...)")
     else:
         logger.warning("Authorization Header: MISSING")
+        
+    if x_auth_token:
+        logger.info(f"X-Auth-Token Header: Present (Starts with {x_auth_token[:10]}...)")
+    else:
+        logger.warning("X-Auth-Token Header: MISSING")
     
     response = await call_next(request)
     return response

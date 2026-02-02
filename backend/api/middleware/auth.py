@@ -3,13 +3,13 @@ JWT 认证中间件
 """
 from datetime import datetime, timedelta
 from typing import Optional
-from fastapi import HTTPException, status, Depends
+from fastapi import HTTPException, status, Depends, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 from backend.config import settings
 
 
-security = HTTPBearer()
+security = HTTPBearer(auto_error=False)
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -38,12 +38,17 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     return encoded_jwt
 
 
-def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) -> dict:
+def verify_token(
+    request: Request,
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> dict:
     """
     验证 JWT token
+    优先检查 X-Auth-Token 头，其次检查 Authorization 头
     
     Args:
-        credentials: HTTP Bearer 凭证
+        request: HTTP 请求对象
+        credentials: HTTP Bearer 凭证（可选）
         
     Returns:
         解码后的 token 数据
@@ -51,7 +56,19 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)) 
     Raises:
         HTTPException: token 无效或过期
     """
-    token = credentials.credentials
+    # 1. 尝试从自定义 Header 获取
+    token = request.headers.get("X-Auth-Token")
+    
+    # 2. 如果没有，尝试从 Authorization Header 获取
+    if not token and credentials:
+        token = credentials.credentials
+        
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="缺少认证 Token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
     
     try:
         payload = jwt.decode(
