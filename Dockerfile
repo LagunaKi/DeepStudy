@@ -11,11 +11,18 @@ RUN echo 'APT::Get::AllowUnauthenticated "true";' > /etc/apt/apt.conf.d/99allow-
     echo "deb [trusted=yes] https://mirrors.aliyun.com/debian-security/ bookworm-security main" >> /etc/apt/sources.list && \
     rm -rf /etc/apt/sources.list.d/* /var/lib/apt/lists/* /var/cache/apt/*
 
-# 2. 安装基础依赖（禁用缓存，最小化安装）
+# 2. 安装基础依赖（分步安装以节省空间）
 RUN rm -rf /var/lib/apt/lists/* && \
     apt-get update --allow-insecure-repositories && \
     apt-get install -y --allow-unauthenticated --no-install-recommends \
-    wget curl ca-certificates tar xz-utils nginx netcat-openbsd && \
+    wget curl ca-certificates tar xz-utils && \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*
+
+# 2.1 安装 Nginx 和 Netcat（单独安装）
+RUN rm -rf /var/lib/apt/lists/* && \
+    apt-get update --allow-insecure-repositories && \
+    apt-get install -y --allow-unauthenticated --no-install-recommends \
+    nginx netcat-openbsd && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
 # 3. 安装 Node.js（直接下载官方二进制包，避免 apt 依赖）
