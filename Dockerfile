@@ -103,9 +103,10 @@ COPY frontend/ ./frontend/
 WORKDIR /home/user/app/frontend
 RUN npm install && npm run build
 
-# 复制 Nginx 配置
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-RUN rm -f /etc/nginx/sites-enabled/default
+# 复制 Nginx 配置（直接覆盖主配置，确保无默认配置干扰）
+COPY nginx.conf /etc/nginx/nginx.conf
+# 确保没有其他站点配置干扰
+RUN rm -rf /etc/nginx/sites-enabled/* /etc/nginx/conf.d/*
 
 # 复制启动脚本
 COPY start.sh /home/user/app/start.sh

@@ -34,7 +34,8 @@ fi
 # 2. 启动后端服务
 echo "[2/3] Starting FastAPI backend..."
 cd /home/user/app
-python -u -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 &
+# 添加 --proxy-headers 以正确处理代理头
+python -u -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips '*' &
 
 # 等待后端启动
 sleep 5

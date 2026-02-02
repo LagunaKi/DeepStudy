@@ -23,6 +23,21 @@ app = FastAPI(
     version="0.1.0"
 )
 
+# [调试] 全局中间件：记录请求头，用于排查 403 问题
+from fastapi import Request
+@app.middleware("http")
+async def log_request_headers(request: Request, call_next):
+    # 打印关键 Header 信息
+    auth_header = request.headers.get("authorization")
+    logger.info(f"Incoming Request: {request.method} {request.url.path}")
+    if auth_header:
+        logger.info(f"Authorization Header: Present (Starts with {auth_header[:10]}...)")
+    else:
+        logger.warning("Authorization Header: MISSING")
+    
+    response = await call_next(request)
+    return response
+
 # 注册知识库路由（在 CORS 之前）
 app.include_router(knowledge.router)
 
