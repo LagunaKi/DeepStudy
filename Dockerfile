@@ -58,6 +58,10 @@ RUN wget -q "https://github.com/adoptium/temurin21-binaries/releases/download/jd
     echo 'export JAVA_HOME=/opt/java-21' >> /etc/profile && \
     echo 'export PATH=$JAVA_HOME/bin:$PATH' >> /etc/profile
 
+# 设置环境变量，确保运行时生效
+ENV JAVA_HOME=/opt/java-21
+ENV PATH=$JAVA_HOME/bin:$PATH
+
 # 设置工作目录
 WORKDIR /home/user/app
 

@@ -4,6 +4,10 @@ echo "=== Starting DeepStudy Application ==="
 
 # 1. 启动 Neo4j
 echo "[1/3] Starting Neo4j..."
+# 显式设置 JAVA_HOME，确保 Neo4j 能找到 Java 21
+export JAVA_HOME=/opt/java-21
+export PATH=$JAVA_HOME/bin:$PATH
+
 neo4j start || {
     echo "Warning: Failed to start Neo4j, but continuing..."
 }
