@@ -70,6 +70,15 @@ app.include_router(mindmap.router, prefix="/api")
 async def startup_event():
     """应用启动时初始化数据库"""
     logger.info("应用启动，初始化数据库...")
+    
+    # 打印关键配置信息（用于验证环境变量是否正确读取）
+    logger.info(f"[配置] MODELSCOPE_API_KEY: {settings.MODELSCOPE_API_KEY[:10]}...{settings.MODELSCOPE_API_KEY[-4:]}")
+    logger.info(f"[配置] JWT_SECRET_KEY: {settings.JWT_SECRET_KEY[:10]}...{settings.JWT_SECRET_KEY[-4:]}")
+    logger.info(f"[配置] MODEL_NAME: {settings.MODEL_NAME}")
+    logger.info(f"[配置] NEO4J_URI: {settings.NEO4J_URI}")
+    logger.info(f"[配置] SQLITE_DB_PATH: {settings.SQLITE_DB_PATH}")
+    logger.info(f"[配置] CORS_ORIGINS: {settings.CORS_ORIGINS}")
+    
     await init_db()
     logger.info("数据库初始化完成")
 

@@ -64,6 +64,8 @@ export const authAPI = {
    * 用户注册
    */
   register: async (data: UserCreate): Promise<AuthResponse> => {
+    // 先清除旧 token，避免密钥变更导致的问题
+    localStorage.removeItem('access_token')
     const response = await apiClient.post<AuthResponse>('/auth/register', data)
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
@@ -75,6 +77,8 @@ export const authAPI = {
    * 用户登录
    */
   login: async (data: UserLogin): Promise<AuthResponse> => {
+    // 先清除旧 token，避免密钥变更导致的问题
+    localStorage.removeItem('access_token')
     const response = await apiClient.post<AuthResponse>('/auth/login', data)
     if (response.data.access_token) {
       localStorage.setItem('access_token', response.data.access_token)
@@ -119,6 +123,13 @@ export const chatAPI = {
       },
       body: JSON.stringify(data),
     })
+
+    // 处理 401 错误
+    if (response.status === 401) {
+      localStorage.removeItem('access_token')
+      window.location.href = '/login'
+      throw new Error('认证失败，请重新登录')
+    }
 
     if (!response.body) {
       throw new Error('后端未返回流数据')

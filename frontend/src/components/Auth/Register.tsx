@@ -17,8 +17,10 @@ const Register = () => {
   const [error, setError] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false)
 
-  // 页面加载时自动聚焦用户名输入框
+  // 页面加载时清除旧 token 并自动聚焦用户名输入框
   useEffect(() => {
+    // 清除可能存在的旧 token（避免密钥变更导致的验证失败）
+    localStorage.removeItem('access_token')
     usernameInputRef.current?.focus()
   }, [])
 
