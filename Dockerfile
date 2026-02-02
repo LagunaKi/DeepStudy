@@ -104,7 +104,8 @@ WORKDIR /home/user/app/frontend
 RUN npm install && npm run build
 
 # 复制 Nginx 配置
-COPY nginx.conf /etc/nginx/sites-available/default
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+RUN rm -f /etc/nginx/sites-enabled/default
 
 # 复制启动脚本
 COPY start.sh /home/user/app/start.sh
