@@ -84,10 +84,14 @@ def verify_token(
                 headers={"WWW-Authenticate": "Bearer"},
             )
         return payload
-    except JWTError:
+    except JWTError as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"JWT 验证失败: {str(e)}, Token前10字符: {token[:10] if token else 'None'}")
+        logger.error(f"当前使用的 JWT_SECRET_KEY 前10字符: {settings.JWT_SECRET_KEY[:10]}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token 已过期",
+            detail=f"Token 验证失败: {str(e)}",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
