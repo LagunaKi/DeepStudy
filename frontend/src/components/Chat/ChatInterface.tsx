@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { useNavigate } from 'react-router-dom'
-import { authAPI, chatAPI, mindMapAPI } from '../../services/api'
+import { chatAPI, mindMapAPI } from '../../services/api'
 import { AgentResponse, MindMapGraph } from '../../types/api'
 import TextFragment from '../Markdown/TextFragment'
 import KnowledgeGraph from '../MindMap/KnowledgeGraph'
@@ -10,8 +9,6 @@ import KnowledgeGraph from '../MindMap/KnowledgeGraph'
  * 包含对话展示、输入框、思维导图侧边栏
  */
 const ChatInterface = () => {
-  const navigate = useNavigate()
-  
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -209,10 +206,7 @@ const ChatInterface = () => {
       console.error('发送消息失败:', error)
       setUserMessages(prev => prev.slice(0, -1))
 
-      if (error?.response?.status === 401) {
-        authAPI.logout()
-        navigate('/login')
-      } else if (error?.response?.status === 404) {
+      if (error?.response?.status === 404) {
         setError('聊天功能暂时不可用，请稍后再试')
       } else {
         setError('发送消息失败，请稍后再试')
@@ -261,14 +255,6 @@ const ChatInterface = () => {
       e.preventDefault()
       handleSend()
     }
-  }
-
-  /**
-   * 登出
-   */
-  const handleLogout = () => {
-    authAPI.logout()
-    navigate('/login')
   }
 
   // ==========================================
@@ -518,22 +504,6 @@ const ChatInterface = () => {
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
             >
               {sidebarOpen ? '隐藏图谱' : '显示图谱'}
-            </button>
-            <button
-              onClick={handleLogout}
-              style={{
-                padding: '8px 16px',
-                border: '1px solid #D1D5DB',
-                borderRadius: '6px',
-                backgroundColor: 'white',
-                cursor: 'pointer',
-                fontSize: '14px',
-                color: '#111827',
-              }}
-              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F3F4F6'}
-              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
-            >
-              登出
             </button>
           </div>
         </div>

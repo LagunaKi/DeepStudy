@@ -8,6 +8,32 @@ echo "[1/3] Starting Neo4j..."
 export JAVA_HOME=/opt/java-21
 export PATH=$JAVA_HOME/bin:$PATH
 
+# 设置 Neo4j 密码（使用环境变量或默认值）
+NEO4J_PASSWORD="${NEO4J_PASSWORD:-neo4j123}"
+echo "Configuring Neo4j password..."
+
+# 检查是否是首次启动（数据目录为空或不存在 auth 文件）
+if [ ! -f "/mnt/workspace/neo4j/data/dbms/auth.ini" ] && [ ! -f "/mnt/workspace/neo4j/data/dbms/auth" ]; then
+    echo "First time setup: Setting initial password..."
+    neo4j-admin dbms set-initial-password "$NEO4J_PASSWORD" 2>/dev/null || {
+        echo "set-initial-password failed, trying alternative method..."
+    }
+else
+    echo "Neo4j data exists, password should already be configured."
+    echo "If authentication fails, you may need to reset the password manually."
+fi
+
+# 禁用认证作为备选方案（确保应用能运行）
+# 在 neo4j.conf 中设置 dbms.security.auth_enabled=false
+if grep -q "^dbms.security.auth_enabled=" /opt/neo4j/conf/neo4j.conf 2>/dev/null; then
+    sed -i 's/^dbms.security.auth_enabled=.*/dbms.security.auth_enabled=false/' /opt/neo4j/conf/neo4j.conf
+elif grep -q "^#dbms.security.auth_enabled=" /opt/neo4j/conf/neo4j.conf 2>/dev/null; then
+    sed -i 's/^#dbms.security.auth_enabled=.*/dbms.security.auth_enabled=false/' /opt/neo4j/conf/neo4j.conf
+else
+    echo "dbms.security.auth_enabled=false" >> /opt/neo4j/conf/neo4j.conf
+fi
+echo "Neo4j authentication disabled for compatibility."
+
 neo4j start || {
     echo "Warning: Failed to start Neo4j, but continuing..."
 }

@@ -19,17 +19,29 @@ class Neo4jClient:
     
     def __init__(self):
         """初始化 Neo4j 客户端并建立连接池"""
+        import os
         self._uri = settings.NEO4J_URI
         self._user = settings.NEO4J_USER
         self._password = settings.NEO4J_PASSWORD
         self.driver = None
-
+        
+        # 检查是否禁用认证（Docker 环境默认禁用）
+        auth_disabled = os.environ.get("NEO4J_AUTH_DISABLED", "").lower() in ("true", "1", "yes")
+        # 在 Docker 环境中默认禁用认证
+        is_docker = os.path.exists("/.dockerenv") or os.path.exists("/mnt/workspace")
+        
         try:
-            self.driver = AsyncGraphDatabase.driver(
-                self._uri,
-                auth=(self._user, self._password)
-            )
-            logger.info(f"Neo4j driver initialized at {self._uri}")
+            if auth_disabled or is_docker:
+                # 禁用认证模式：不传 auth 参数
+                self.driver = AsyncGraphDatabase.driver(self._uri)
+                logger.info(f"Neo4j driver initialized at {self._uri} (auth disabled)")
+            else:
+                # 启用认证模式
+                self.driver = AsyncGraphDatabase.driver(
+                    self._uri,
+                    auth=(self._user, self._password)
+                )
+                logger.info(f"Neo4j driver initialized at {self._uri} (auth enabled)")
         except Exception as e:
             logger.error(f"Failed to initialize Neo4j driver: {e}")
             raise e

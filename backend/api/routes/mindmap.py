@@ -1,9 +1,8 @@
 """
 思维导图相关路由 (纯数据稳健版)
 """
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from backend.api.schemas.response import MindMapGraph
-from backend.api.middleware.auth import get_current_user_id
 from backend.data.neo4j_client import neo4j_client
 import logging
 
@@ -13,10 +12,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/mindmap", tags=["mindmap"])
 
 @router.get("/{conversation_id}", response_model=MindMapGraph)
-async def get_mind_map(
-    conversation_id: str,
-    user_id: str = Depends(get_current_user_id)
-):
+async def get_mind_map(conversation_id: str):
     logger.info(f"[MindMap Tree] 开始查询会话树: {conversation_id}")
     
     # 修复：使用 CONCAT 函数，并优先查找 _root 节点

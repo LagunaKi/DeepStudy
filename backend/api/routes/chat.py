@@ -3,30 +3,30 @@
 """
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 
 from backend.api.schemas.request import ChatRequest
 from backend.api.schemas.response import DialogueNodeBase
-from backend.api.middleware.auth import get_current_user_id
 from backend.agent.orchestrator import AgentOrchestrator
 from backend.data.neo4j_client import neo4j_client
 
 # 配置日志
 logger = logging.getLogger(__name__)
 
+# 匿名用户 ID（移除登录后所有用户共用）
+ANONYMOUS_USER_ID = "anonymous"
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
 @router.post("")
-async def chat(
-    request: ChatRequest,
-    user_id: str = Depends(get_current_user_id),
-):
+async def chat(request: ChatRequest):
     """
     发送聊天消息（支持普通提问和划词追问），使用 HTTP 流式返回结果。
     """
+    user_id = ANONYMOUS_USER_ID
+    
     logger.info(
         "收到聊天请求: user_id=%s, query=%s...",
         user_id,
@@ -75,20 +75,18 @@ async def chat(
 
 
 @router.get("/conversation/{conversation_id}", response_model=DialogueNodeBase)
-async def get_conversation(
-    conversation_id: str,
-    user_id: str = Depends(get_current_user_id)
-):
+async def get_conversation(conversation_id: str):
     """
     获取对话树（从 Neo4j 查询）
     
     Args:
         conversation_id: 对话 ID（AI 节点 ID）
-        user_id: 当前用户 ID
         
     Returns:
         对话树节点
     """
+    user_id = ANONYMOUS_USER_ID
+    
     try:
         tree = await neo4j_client.get_dialogue_tree(
             root_node_id=conversation_id,
