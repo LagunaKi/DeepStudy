@@ -74,23 +74,8 @@ export interface AgentResponse {
  * UI层状态协议：兼容 ReactFlow 的节点格式
  */
 export interface MindMapGraph {
-  nodes: Array<{
-    id: string
-    data: {
-      label: string
-      mastery?: number // 掌握度评分 (0-1)
-      [key: string]: any
-    }
-    position: { x: number; y: number }
-    [key: string]: any
-  }>
-  edges: Array<{
-    id: string
-    source: string
-    target: string
-    label?: string
-    [key: string]: any
-  }>
+  nodes: MindMapNode[]
+  edges: MindMapEdge[]
 }
 
 /**
@@ -119,4 +104,24 @@ export interface ErrorResponse {
   code: number
   message: string
   detail?: string
+}
+
+
+export interface MindMapNode {
+  id: string
+  data: {
+    label: string
+    mastery?: number 
+    variant?: string 
+    [key: string]: any
+  }
+  position: { x: number; y: number }
+  [key: string]: any
+}
+export interface MindMapEdge {
+  id: string
+  source: string
+  target: string
+  label?: string
+  [key: string]: any
 }

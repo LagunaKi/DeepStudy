@@ -1,43 +1,127 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { chatAPI, mindMapAPI } from '../../services/api'
-import { AgentResponse, MindMapGraph } from '../../types/api'
+import { AgentResponse, MindMapGraph, MindMapNode, MindMapEdge } from '../../types/api'
 import TextFragment from '../Markdown/TextFragment'
 import KnowledgeGraph from '../MindMap/KnowledgeGraph'
 
-/**
- * 聊天界面主组件
- * 包含对话展示、输入框、思维导图侧边栏
- */
 const ChatInterface = () => {
+  // --- 基础 Refs ---
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   
+  // --- 基础 State ---
   const [messages, setMessages] = useState<AgentResponse[]>([])
   const [userMessages, setUserMessages] = useState<string[]>([])
   const [input, setInput] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false)
   const [hasFirstChunk, setHasFirstChunk] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
-  const [mindMapData, setMindMapData] = useState<MindMapGraph>({ nodes: [], edges: [] })
+  
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
-  const [sidebarWidth, setSidebarWidth] = useState<number>(400) // 侧边栏宽度
-  const [isResizing, setIsResizing] = useState<boolean>(false) // 是否正在调整大小
+  const [sidebarWidth, setSidebarWidth] = useState<number>(400)
+  const [isResizing, setIsResizing] = useState<boolean>(false)
   const [sessionId] = useState<string>(() => `session_${Date.now()}`)
+  
   const [questionModalOpen, setQuestionModalOpen] = useState(false)
   const [selectedFragmentId, setSelectedFragmentId] = useState<string>('')
   const [selectedText, setSelectedText] = useState<string>('')
   const [questionInput, setQuestionInput] = useState<string>('')
 
+  // ⭐⭐⭐ 核心 State ⭐⭐⭐
+  // 1. mindMapData: 最终展示给用户的完整大图
+  const [mindMapData, setMindMapData] = useState<MindMapGraph>({ nodes: [], edges: [] })
+  
+  // 2. currentPollingId: 当前正在发生的对话 ID (每次提问都会变)
+  const [currentPollingId, setCurrentPollingId] = useState<string | null>(null)
+
   // ==========================================
-  // 👇👇👇 稳健滚动逻辑 (使用 requestAnimationFrame) 👇👇👇
+  // 👇👇👇 核心逻辑：增量合并算法 👇👇👇
+  // ==========================================
+  
+  // 这个函数负责把“新来的数据”缝合到“旧数据”上
+  const mergeData = (oldData: MindMapGraph, newData: MindMapGraph): MindMapGraph => {
+    // 1. 建立 Map 用于去重 (ID 为 Key)
+    const nodeMap = new Map<string, MindMapNode>();
+    const edgeMap = new Map<string, MindMapEdge>();
+
+    // 2. 先把旧数据放进去
+    oldData.nodes.forEach(n => nodeMap.set(n.id, n));
+    oldData.edges.forEach(e => edgeMap.set(`${e.source}-${e.target}`, e));
+
+    // 3. 再把新数据放进去 (如果有重复 ID，新数据会覆盖旧数据，这很好，因为可能有状态更新)
+    newData.nodes.forEach(n => {
+        // 🎨 样式补丁：如果是第一个节点，给它 root 样式；其他的给 explanation 样式
+        // 这样可以保证根节点永远是蓝色的，新长出来的都是橙色的
+        const variant = nodeMap.size === 0 ? 'root' : 'explanation';
+        
+        // 如果这个节点已经存在且有了 variant，保留原来的；否则用新的
+        const existing = nodeMap.get(n.id);
+        const finalVariant = existing?.data?.variant || n.data?.variant || variant;
+
+        nodeMap.set(n.id, {
+            ...n,
+            data: { ...n.data, variant: finalVariant }
+        });
+    });
+
+    newData.edges.forEach(e => edgeMap.set(`${e.source}-${e.target}`, e));
+
+    // 4. 返回合并后的结果
+    return {
+        nodes: Array.from(nodeMap.values()),
+        edges: Array.from(edgeMap.values())
+    };
+  };
+
+  // 轮询 Effect
+  useEffect(() => {
+    // 只有当有 ID 且侧边栏打开时才轮询
+    if (!currentPollingId || !sidebarOpen) return;
+
+    let isMounted = true;
+
+    const fetchAndMerge = async () => {
+      try {
+        // 只查当前最新的 ID (因为后端这次已经修复了，查子 ID 也能返回它周围的数据)
+        const data = await mindMapAPI.getMindMap(currentPollingId);
+        
+        if (isMounted && data && data.nodes && data.nodes.length > 0) {
+          setMindMapData(prev => {
+            // 执行合并
+            const merged = mergeData(prev, data);
+            
+            // 只有当节点数量真的变多了，才更新 State (防止死循环渲染)
+            if (merged.nodes.length !== prev.nodes.length || merged.edges.length !== prev.edges.length) {
+                // console.log(`图谱更新: 从 ${prev.nodes.length} -> ${merged.nodes.length} 个节点`);
+                return merged;
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        // 轮询出错不报错，静默重试
+      }
+    };
+
+    // 立即执行一次
+    fetchAndMerge();
+
+    // 每 2 秒轮询一次 (频率稍微调高一点，让你能更快看到结果)
+    const interval = setInterval(fetchAndMerge, 2000);
+
+    return () => {
+      isMounted = false;
+      clearInterval(interval);
+    };
+  }, [currentPollingId, sidebarOpen]); // 只要 ID 变了，就立刻开始查新 ID
+
   // ==========================================
 
   const scrollToBottom = (behavior: 'auto' | 'smooth' = 'smooth') => {
     if (scrollContainerRef.current) {
         const { scrollHeight, clientHeight } = scrollContainerRef.current
-        // 直接操作 scrollTop 比 scrollIntoView 更稳
         scrollContainerRef.current.scrollTo({
             top: scrollHeight - clientHeight,
             behavior: behavior
@@ -45,23 +129,17 @@ const ChatInterface = () => {
     }
   }
 
-  // 1. 新消息加入时，平滑滚动
   useEffect(() => {
-    // 只有当是新消息（非流式更新中）或者刚开始流式输出时滚动
     if (!loading || (loading && !hasFirstChunk)) {
         scrollToBottom('smooth')
     }
   }, [messages.length, loading, hasFirstChunk])
 
-  // 2. AI 打字时，智能吸附
   useEffect(() => {
     if (loading && hasFirstChunk) {
         const container = scrollContainerRef.current
         if (container) {
-            // 计算距离底部的距离
             const distance = container.scrollHeight - container.scrollTop - container.clientHeight
-            
-            // 如果用户正在看底部 (距离 < 100px)，则瞬间吸附，防止抖动
             if (distance < 100) {
                 requestAnimationFrame(() => {
                     scrollToBottom('auto')
@@ -71,34 +149,20 @@ const ChatInterface = () => {
     }
   }, [messages]) 
 
-  // ==========================================
-
-  /**
-   * 发送消息（支持普通提问和划词追问）
-   */
   const handleSend = async (refFragmentId?: string, selectedText?: string, queryOverride?: string) => {
-    // 优先使用传入的 query，否则使用 input state
     const query = (queryOverride || input).trim()
-    
     if (!query || loading) return
 
-    // 只有在使用 input state 时才清空（避免清空追问输入）
-    if (!queryOverride) {
-      setInput('')
-    }
+    if (!queryOverride) setInput('')
     setError('')
     setLoading(true)
     setHasFirstChunk(false)
 
-    // 先记录用户消息
     setUserMessages(prev => [...prev, query])
 
-    // 为 AI 创建一条占位消息
     const parentId = messages.length > 0 ? messages[messages.length - 1].conversation_id : null
     const aiIndex = messages.length
     
-    let currentConversationId = ''
-
     setMessages(prev => [
       ...prev,
       {
@@ -121,14 +185,16 @@ const ChatInterface = () => {
           session_id: sessionId,
         },
         (payload: { type: string; text?: string; conversation_id?: string; parent_id?: string; answer?: string }) => {
-          // 跟踪 conversation_id
+          
           if (payload.conversation_id) {
-            currentConversationId = payload.conversation_id
+            // ⭐ 核心逻辑：只要有了新 ID，就立刻把它设为当前轮询目标
+            // 剩下的交给 useEffect 去把它抓回来并合并
+            setCurrentPollingId(payload.conversation_id as string);
+            
+            if (!sidebarOpen) setSidebarOpen(true);
           }
 
-          // 处理流式增量
           if (payload.type === 'meta' && payload.conversation_id) {
-            // 更新占位消息的 conversation_id
             setMessages(prev => {
               const next = [...prev]
               if (next[aiIndex]) {
@@ -137,7 +203,6 @@ const ChatInterface = () => {
               return next
             })
           } else if (payload.type === 'delta' && payload.text) {
-            // 收到首个增量，隐藏"思考中"
             setHasFirstChunk(true)
             setMessages(prev => {
               const next = [...prev]
@@ -147,7 +212,6 @@ const ChatInterface = () => {
               return next
             })
           } else if (payload.type === 'full' && payload.answer) {
-            // 非流式划词追问路径：一次性完整返回
             setMessages(prev => {
               const next = [...prev]
               next[aiIndex] = {
@@ -164,48 +228,9 @@ const ChatInterface = () => {
         }
       )
 
-      // 流结束后，如果拿到了 conversation_id，则刷新思维导图
-      // 延迟查询，等待 Neo4j 保存完成，并添加重试机制
-      if (currentConversationId) {
-        // 延迟 1 秒，给 Neo4j 保存留出时间
-        setTimeout(async () => {
-          try {
-            // 最多重试 3 次
-            let retries = 3
-            let graphData = null
-            
-            while (retries > 0) {
-              try {
-                graphData = await mindMapAPI.getMindMap(currentConversationId)
-                if (graphData && graphData.nodes && graphData.nodes.length > 0) {
-                  setMindMapData(graphData)
-                  if (!sidebarOpen) setSidebarOpen(true)
-                  break // 成功获取数据，退出重试循环
-                }
-              } catch (err) {
-                console.warn(`思维导图加载失败 (剩余重试 ${retries - 1} 次):`, err)
-              }
-              
-              retries--
-              if (retries > 0 && (!graphData || graphData.nodes.length === 0)) {
-                // 等待 500ms 后重试
-                await new Promise(resolve => setTimeout(resolve, 500))
-              }
-            }
-            
-            if (!graphData || graphData.nodes.length === 0) {
-              console.warn('思维导图加载失败：重试 3 次后仍无数据')
-            }
-          } catch (err) {
-            // 思维导图加载失败不影响主流程
-            console.warn('思维导图加载失败:', err)
-          }
-        }, 1000) // 延迟 1 秒
-      }
     } catch (error: any) {
       console.error('发送消息失败:', error)
       setUserMessages(prev => prev.slice(0, -1))
-
       if (error?.response?.status === 404) {
         setError('聊天功能暂时不可用，请稍后再试')
       } else {
@@ -216,9 +241,7 @@ const ChatInterface = () => {
     }
   }
 
-  /**
-   * 处理片段选择（划词追问）
-   */
+  // ... (剩余的UI辅助代码保持不变) ...
   const handleFragmentSelect = (fragmentId: string, selectedText: string) => {
     setSelectedFragmentId(fragmentId)
     setSelectedText(selectedText)
@@ -226,20 +249,12 @@ const ChatInterface = () => {
     setQuestionModalOpen(true)
   }
 
-  /**
-   * 处理追问提交
-   */
   const handleQuestionSubmit = async () => {
     if (!questionInput.trim()) return
-
     setQuestionModalOpen(false)
-    // 直接传递 query，不依赖 state 更新
     handleSend(selectedFragmentId, selectedText, questionInput.trim())
   }
 
-  /**
-   * 处理追问取消
-   */
   const handleQuestionCancel = () => {
     setQuestionModalOpen(false)
     setSelectedFragmentId('')
@@ -247,19 +262,12 @@ const ChatInterface = () => {
     setQuestionInput('')
   }
 
-  /**
-   * 处理键盘事件
-   */
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       handleSend()
     }
   }
-
-  // ==========================================
-  // 👇👇👇 拖拽调整大小逻辑 👇👇👇
-  // ==========================================
 
   const handleMouseDown = (e: React.MouseEvent) => {
     e.preventDefault()
@@ -268,14 +276,10 @@ const ChatInterface = () => {
 
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizing || !containerRef.current) return
-    
     const containerRect = containerRef.current.getBoundingClientRect()
-    const newWidth = containerRect.right - e.clientX - 16 // 16px 是右侧 margin
-    
-    // 设置最小和最大宽度限制
+    const newWidth = containerRect.right - e.clientX - 16
     const minWidth = 300
-    const maxWidth = containerRect.width * 0.6 // 最多占 60% 宽度
-    
+    const maxWidth = containerRect.width * 0.6
     if (newWidth >= minWidth && newWidth <= maxWidth) {
       setSidebarWidth(newWidth)
     }
@@ -291,7 +295,6 @@ const ChatInterface = () => {
       document.addEventListener('mouseup', handleMouseUp)
       document.body.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
-      
       return () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
@@ -301,18 +304,14 @@ const ChatInterface = () => {
     }
   }, [isResizing, handleMouseMove, handleMouseUp])
 
-  // ==========================================
-
-  // 样式定义
   const containerStyle: React.CSSProperties = {
     position: 'relative',
     display: 'flex',
     height: '100vh',
-    width: '100vw', // 确保占满宽
+    width: '100vw',
     backgroundColor: 'transparent',
     overflow: 'hidden',
   }
-
   const backgroundStyle: React.CSSProperties = {
     position: 'fixed',
     top: 0,
@@ -328,10 +327,8 @@ const ChatInterface = () => {
     opacity: 0.6,
     zIndex: -1,
   }
-
-  // 👇👇👇 修复核心：显式指定高度，强制撑开！ 👇👇👇
   const mainAreaStyle: React.CSSProperties = {
-    flex: sidebarOpen ? `0 0 calc(100% - ${sidebarWidth + 48}px)` : '1', // 48px 是 margin 总和
+    flex: sidebarOpen ? `0 0 calc(100% - ${sidebarWidth + 48}px)` : '1',
     display: 'flex',
     flexDirection: 'column',
     backgroundColor: 'rgba(255, 255, 255, 0.8)',
@@ -341,11 +338,10 @@ const ChatInterface = () => {
     overflow: 'hidden',
     position: 'relative',
     zIndex: 1,
-    height: 'calc(100vh - 32px)', // 👈 这一行是救命稻草！
-    minWidth: 0, // 允许收缩
-    transition: sidebarOpen && !isResizing ? 'flex 0.3s' : 'none', // 只在关闭时过渡，调整大小时不过渡
+    height: 'calc(100vh - 32px)',
+    minWidth: 0,
+    transition: sidebarOpen && !isResizing ? 'flex 0.3s' : 'none',
   }
-
   const headerStyle: React.CSSProperties = {
     padding: '16px 24px',
     borderBottom: '1px solid #E5E7EB',
@@ -355,22 +351,19 @@ const ChatInterface = () => {
     backgroundColor: 'white',
     flexShrink: 0,
   }
-
   const messagesAreaStyle: React.CSSProperties = {
     flex: 1,
     overflowY: 'auto',
     padding: '24px',
     backgroundColor: 'rgba(249, 250, 251, 0.6)',
     scrollBehavior: 'auto',
-    minHeight: 0, // 防止 Flex 子项溢出
+    minHeight: 0,
   }
-
   const userMessageStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'flex-end',
     marginBottom: '16px',
   }
-
   const userBubbleStyle: React.CSSProperties = {
     maxWidth: '70%',
     padding: '12px 16px',
@@ -381,13 +374,11 @@ const ChatInterface = () => {
     lineHeight: '1.5',
     wordWrap: 'break-word',
   }
-
   const aiMessageStyle: React.CSSProperties = {
     display: 'flex',
     justifyContent: 'flex-start',
     marginBottom: '24px',
   }
-
   const aiCardStyle: React.CSSProperties = {
     maxWidth: '85%',
     padding: '20px',
@@ -396,7 +387,6 @@ const ChatInterface = () => {
     boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
     border: '1px solid #E5E7EB',
   }
-
   const inputAreaStyle: React.CSSProperties = {
     padding: '16px 24px',
     borderTop: '1px solid #E5E7EB',
@@ -406,7 +396,6 @@ const ChatInterface = () => {
     alignItems: 'flex-end',
     flexShrink: 0,
   }
-
   const textareaStyle: React.CSSProperties = {
     flex: 1,
     padding: '12px 16px',
@@ -420,7 +409,6 @@ const ChatInterface = () => {
     outline: 'none',
     transition: 'border-color 0.2s',
   }
-
   const buttonStyle: React.CSSProperties = {
     padding: '12px 24px',
     backgroundColor: '#2563EB',
@@ -433,12 +421,11 @@ const ChatInterface = () => {
     opacity: loading || !input.trim() ? 0.6 : 1,
     transition: 'background-color 0.2s',
   }
-
   const sidebarStyle: React.CSSProperties = {
     width: sidebarOpen ? `${sidebarWidth}px` : '0',
     borderLeft: sidebarOpen ? '1px solid #E5E7EB' : 'none',
     backgroundColor: 'rgba(255, 255, 255, 0.9)',
-    transition: isResizing ? 'none' : 'width 0.3s, border 0.3s', // 调整大小时不过渡
+    transition: isResizing ? 'none' : 'width 0.3s, border 0.3s',
     overflow: 'hidden',
     display: 'flex',
     flexDirection: 'column',
@@ -447,9 +434,8 @@ const ChatInterface = () => {
     boxShadow: '0 2px 10px rgba(0,0,0,0.1)',
     position: 'relative',
     zIndex: 1,
-    height: 'calc(100vh - 32px)', // 侧边栏也加上这个高度，保持对齐
+    height: 'calc(100vh - 32px)',
   }
-
   const resizerStyle: React.CSSProperties = {
     position: 'absolute',
     left: 0,
@@ -461,7 +447,6 @@ const ChatInterface = () => {
     zIndex: 10,
     transition: 'background-color 0.2s',
   }
-
   const errorStyle: React.CSSProperties = {
     padding: '12px 16px',
     marginBottom: '16px',
@@ -473,12 +458,8 @@ const ChatInterface = () => {
 
   return (
     <div style={containerStyle} ref={containerRef}>
-      {/* 背景层（模糊） */}
       <div style={backgroundStyle} />
-
-      {/* 主聊天区域 */}
       <div style={mainAreaStyle}>
-        {/* 头部 */}
         <div style={headerStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827', margin: 0 }}>
@@ -508,24 +489,17 @@ const ChatInterface = () => {
           </div>
         </div>
 
-        {/* 绑定滚动容器 Ref */}
         <div style={messagesAreaStyle} ref={scrollContainerRef}>
           {messages.length === 0 && (
-            <div style={{
-              textAlign: 'center',
-              color: '#6B7280',
-              marginTop: '100px',
-            }}>
+            <div style={{ textAlign: 'center', color: '#6B7280', marginTop: '100px' }}>
               <h2 style={{ fontSize: '24px', marginBottom: '8px', color: '#111827' }}>
                 开始你的学习之旅
               </h2>
               <p>输入你的问题，AI 助手会帮助你深入理解</p>
             </div>
           )}
-
           {messages.map((msg, index) => (
             <div key={index}>
-              {/* 用户消息 */}
               {userMessages[index] && (
                 <div style={userMessageStyle}>
                   <div style={userBubbleStyle}>
@@ -533,8 +507,6 @@ const ChatInterface = () => {
                   </div>
                 </div>
               )}
-
-              {/* AI 回答 */}
               <div style={aiMessageStyle}>
                 <div style={aiCardStyle}>
                   {msg.answer ? (
@@ -560,14 +532,10 @@ const ChatInterface = () => {
               </div>
             </div>
           ))}
-
-          {/* 错误提示 */}
           {error && <div style={errorStyle} role="alert">{error}</div>}
-
           <div ref={messagesEndRef} />
         </div>
 
-        {/* 输入区域 */}
         <div style={inputAreaStyle}>
           <textarea
             ref={inputRef}
@@ -611,25 +579,18 @@ const ChatInterface = () => {
         </div>
       </div>
 
-      {/* 思维导图侧边栏 */}
       {sidebarOpen && (
         <div style={sidebarStyle}>
-          {/* 可拖拽的分隔条 */}
           <div
             style={isResizing ? { ...resizerStyle, backgroundColor: '#2563EB' } : resizerStyle}
             onMouseDown={handleMouseDown}
             onMouseEnter={(e) => {
-              if (!isResizing) {
-                e.currentTarget.style.backgroundColor = '#E5E7EB'
-              }
+              if (!isResizing) e.currentTarget.style.backgroundColor = '#E5E7EB'
             }}
             onMouseLeave={(e) => {
-              if (!isResizing) {
-                e.currentTarget.style.backgroundColor = 'transparent'
-              }
+              if (!isResizing) e.currentTarget.style.backgroundColor = 'transparent'
             }}
           />
-          
           <div style={{
             padding: '16px',
             borderBottom: '1px solid #E5E7EB',
@@ -662,147 +623,38 @@ const ChatInterface = () => {
         </div>
       )}
 
-      {/* 追问弹窗 */}
       {questionModalOpen && (
         <div
           style={{
             position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
+            top: 0, left: 0, right: 0, bottom: 0,
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            zIndex: 1000,
+            display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000,
           }}
           onClick={handleQuestionCancel}
         >
           <div
             style={{
-              backgroundColor: 'white',
-              borderRadius: '12px',
-              padding: '24px',
-              maxWidth: '500px',
-              width: '90%',
-              maxHeight: '80vh',
-              overflowY: 'auto',
+              backgroundColor: 'white', borderRadius: '12px', padding: '24px',
+              maxWidth: '500px', width: '90%', maxHeight: '80vh', overflowY: 'auto',
               boxShadow: '0 10px 25px rgba(0, 0, 0, 0.15)',
             }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ marginBottom: '20px' }}>
-              <h2 style={{ fontSize: '20px', fontWeight: 600, margin: 0, color: '#111827' }}>
-                追问关于选中内容
-              </h2>
-              <p style={{ fontSize: '14px', color: '#6B7280', marginTop: '8px' }}>
-                对以下选中的内容进行深入追问
-              </p>
+              <h2 style={{ fontSize: '20px', fontWeight: 600, margin: 0, color: '#111827' }}>追问关于选中内容</h2>
+              <p style={{ fontSize: '14px', color: '#6B7280', marginTop: '8px' }}>对以下选中的内容进行深入追问</p>
             </div>
-
-            {/* 选中的文本预览 */}
-            <div
-              style={{
-                backgroundColor: '#F3F4F6',
-                padding: '16px',
-                borderRadius: '8px',
-                marginBottom: '20px',
-                fontSize: '14px',
-                lineHeight: '1.5',
-                borderLeft: '4px solid #2563EB',
-              }}
-            >
+            <div style={{ backgroundColor: '#F3F4F6', padding: '16px', borderRadius: '8px', marginBottom: '20px', fontSize: '14px', lineHeight: '1.5', borderLeft: '4px solid #2563EB' }}>
               {selectedText}
             </div>
-
-            {/* 问题输入 */}
             <div style={{ marginBottom: '24px' }}>
-              <label
-                style={{
-                  display: 'block',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  color: '#374151',
-                  marginBottom: '8px',
-                }}
-              >
-                你的问题
-              </label>
-              <textarea
-                value={questionInput}
-                onChange={(e) => setQuestionInput(e.target.value)}
-                placeholder="输入你想了解的问题..."
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  border: '1px solid #D1D5DB',
-                  borderRadius: '8px',
-                  fontSize: '14px',
-                  lineHeight: '1.5',
-                  resize: 'vertical',
-                  minHeight: '80px',
-                  fontFamily: 'inherit',
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
-                    handleQuestionSubmit()
-                  }
-                }}
-              />
+              <label style={{ display: 'block', fontSize: '14px', fontWeight: 500, color: '#374151', marginBottom: '8px' }}>你的问题</label>
+              <textarea value={questionInput} onChange={(e) => setQuestionInput(e.target.value)} placeholder="输入你想了解的问题..." style={{ width: '100%', padding: '12px', border: '1px solid #D1D5DB', borderRadius: '8px', fontSize: '14px', lineHeight: '1.5', resize: 'vertical', minHeight: '80px', fontFamily: 'inherit' }} onKeyDown={(e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) { handleQuestionSubmit() } }} />
             </div>
-
-            {/* 操作按钮 */}
             <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={handleQuestionCancel}
-                style={{
-                  padding: '10px 20px',
-                  border: '1px solid #D1D5DB',
-                  borderRadius: '8px',
-                  backgroundColor: 'white',
-                  color: '#374151',
-                  cursor: 'pointer',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  e.currentTarget.style.backgroundColor = '#F3F4F6'
-                }}
-                onMouseLeave={(e) => {
-                  e.currentTarget.style.backgroundColor = 'white'
-                }}
-              >
-                取消
-              </button>
-              <button
-                onClick={handleQuestionSubmit}
-                disabled={!questionInput.trim()}
-                style={{
-                  padding: '10px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: questionInput.trim() ? '#2563EB' : '#93C5FD',
-                  color: 'white',
-                  cursor: questionInput.trim() ? 'pointer' : 'not-allowed',
-                  fontSize: '14px',
-                  fontWeight: 500,
-                  transition: 'all 0.2s',
-                }}
-                onMouseEnter={(e) => {
-                  if (questionInput.trim()) {
-                    e.currentTarget.style.backgroundColor = '#1D4ED8'
-                  }
-                }}
-                onMouseLeave={(e) => {
-                  if (questionInput.trim()) {
-                    e.currentTarget.style.backgroundColor = '#2563EB'
-                  }
-                }}
-              >
-                提交追问
-              </button>
+              <button onClick={handleQuestionCancel} style={{ padding: '10px 20px', border: '1px solid #D1D5DB', borderRadius: '8px', backgroundColor: 'white', color: '#374151', cursor: 'pointer', fontSize: '14px', fontWeight: 500 }} onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F3F4F6'} onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}>取消</button>
+              <button onClick={handleQuestionSubmit} disabled={!questionInput.trim()} style={{ padding: '10px 20px', border: 'none', borderRadius: '8px', backgroundColor: questionInput.trim() ? '#2563EB' : '#93C5FD', color: 'white', cursor: questionInput.trim() ? 'pointer' : 'not-allowed', fontSize: '14px', fontWeight: 500 }} onMouseEnter={(e) => { if (questionInput.trim()) e.currentTarget.style.backgroundColor = '#1D4ED8' }} onMouseLeave={(e) => { if (questionInput.trim()) e.currentTarget.style.backgroundColor = '#2563EB' }}>提交追问</button>
             </div>
           </div>
         </div>

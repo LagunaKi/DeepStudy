@@ -463,67 +463,121 @@ class AgentOrchestrator:
         parent_id: str
     ):
         """
-        递归追问的后处理：知识三元组提取 + Neo4j 保存
+        [修复版] 递归追问后处理：显式创建 _root 节点，确保 API 能查到
         """
-        logger.info("[stream] 开始后处理递归追问：知识提取和图谱构建...")
+        logger.info("[stream] 开始后处理递归追问：概念提炼与图谱构建...")
         
         try:
-            # 提取知识三元组
-            logger.info("[stream] 提取知识三元组...")
-            try:
-                knowledge_triples = knowledge_extractor.extract_triples(full_answer)
-                logger.info(f"[stream] 成功提取 {len(knowledge_triples)} 个知识三元组")
-            except Exception as e:
-                logger.warning(f"[stream] 知识三元组提取失败: {str(e)}", exc_info=True)
-                knowledge_triples = []
+            # =====================================================
+            # 1. 保存基础对话结构 (User -> AI)
+            # =====================================================
+            user_node_id = f"{conversation_id}_user"
+            ai_node_id = conversation_id  # 这是对话 ID
+            
+            # 保存用户提问
+            await neo4j_client.save_dialogue_node(
+                node_id=user_node_id,
+                user_id=user_id,
+                role="user",
+                content=query,
+                intent="recursive",
+            )
+            # 保存 AI 回答
+            await neo4j_client.save_dialogue_node(
+                node_id=ai_node_id,
+                user_id=user_id,
+                role="assistant",
+                content=full_answer,
+                intent="recursive",
+                type="explanation"
+            )
+            # 建立对话连接
+            await neo4j_client.link_dialogue_nodes(user_node_id, ai_node_id)
+            if parent_id:
+                await neo4j_client.link_dialogue_nodes(parent_id, user_node_id)
 
-            # 保存到 Neo4j（降级模式）
-            try:
-                # 创建用户节点
-                user_node_id = f"{conversation_id}_user"
-                await neo4j_client.save_dialogue_node(
-                    node_id=user_node_id,
-                    user_id=user_id,
-                    role="user",
-                    content=query,
-                    intent="recursive",
-                )
+            # =====================================================
+            # 2. 概念提炼与 _root 节点创建
+            # =====================================================
+            
+            # ... (Concept Prompt 代码保持不变) ...
+            extraction_prompt = f"""
+            基于以下追问和回答，提炼出一个核心概念节点(Root)和3-5个关键子概念节点(Children)。
+            
+            用户追问: {query}
+            AI回答: {full_answer}
+            
+            请严格只返回 JSON 格式，不要包含 Markdown 标记。格式如下：
+            {{
+                "root": "核心概念(简短名词)",
+                "children": ["子概念1", "子概念2", "子概念3"]
+            }}
+            """
+            
+            summary_res = await self.llm.acomplete(extraction_prompt)
+            summary_text = summary_res.text if hasattr(summary_res, 'text') else str(summary_res)
+            summary_text = summary_text.replace("```json", "").replace("```", "").strip()
+            
+            structure = json.loads(summary_text)
+            root_label = structure.get("root", "核心概念")
+            children = structure.get("children", [])
+            
+            logger.info(f"[stream] 概念提炼成功: Root={root_label}, Children={children}")
 
-                # 创建AI节点
-                ai_node_id = conversation_id
+            # ⭐⭐⭐ 核心修复点：显式创建 _root 节点 ⭐⭐⭐
+            # 必须创建一个 ID 为 {conversation_id}_root 的节点，API 才能查到！
+            mindmap_root_id = f"{conversation_id}_root"
+            
+            await neo4j_client.save_dialogue_node(
+                node_id=mindmap_root_id,
+                user_id=user_id,
+                role="assistant",
+                content=root_label, # 这里的核心概念
+                title=root_label,
+                type="root" # 标记为根节点
+            )
+            
+            # 将这个 _root 节点挂在 AI 回答节点下面
+            # 结构：AI回答(explanation) -> 核心概念(_root) -> 子概念(keyword)
+            await neo4j_client.link_dialogue_nodes(ai_node_id, mindmap_root_id)
+
+            # 3. 创建并连接子概念
+            for child_concept in children:
+                # 为了防止不同图谱间 ID 冲突，建议给 ID 加个随机后缀或前缀，或者直接用概念名(如果允许复用)
+                # 这里我们简单处理，直接用概念名（如果你的 neo4j_client 允许复用节点）
+                child_id = child_concept
+                
                 await neo4j_client.save_dialogue_node(
-                    node_id=ai_node_id,
+                    node_id=child_id,
                     user_id=user_id,
                     role="assistant",
-                    content=full_answer,
-                    intent="recursive",
+                    content=child_concept,
+                    title=child_concept,
+                    type="keyword"
                 )
+                
+                # 连线：核心概念(_root) -> 子概念
+                await neo4j_client.link_dialogue_nodes(mindmap_root_id, child_id)
 
-                # 创建用户到AI的关系
-                await neo4j_client.link_dialogue_nodes(
-                    parent_node_id=user_node_id,
-                    child_node_id=ai_node_id,
-                )
-
-                # 创建父节点到用户节点的关系
-                if parent_id:
-                    await neo4j_client.link_dialogue_nodes(
-                        parent_node_id=parent_id,
-                        child_node_id=user_node_id,
+            # =====================================================
+            # 3. 补充三元组 (挂在 _root 下面)
+            # =====================================================
+            try:
+                knowledge_triples = knowledge_extractor.extract_triples(full_answer)
+                for sub, pred, obj in knowledge_triples:
+                    await neo4j_client.save_dialogue_node(
+                        node_id=obj, user_id=user_id, role="assistant", 
+                        content=obj, title=obj, type="keyword"
                     )
-                logger.info("[stream] 递归追问对话保存到Neo4j成功")
-            except Exception as e:
-                logger.warning(
-                    "[stream] 保存递归追问对话到Neo4j失败（已降级处理）: %s",
-                    str(e),
-                    exc_info=True,
-                )
+                    # 同样挂在 _root 下面
+                    await neo4j_client.link_dialogue_nodes(mindmap_root_id, obj)
+            except:
+                pass
+
+            logger.info("[stream] 递归追问图谱构建完成 (Root Node Created)")
+
         except Exception as e:
-            logger.warning(
-                "[stream] 后处理失败（已降级处理，不影响主流程）: %s",
-                str(e),
-                exc_info=True,
-            )
+            logger.warning(f"[stream] 后处理失败: {e}", exc_info=True)
 
     async def process_recursive_query(
         self,

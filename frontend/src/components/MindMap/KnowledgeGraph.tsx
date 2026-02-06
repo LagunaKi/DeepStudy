@@ -1,61 +1,56 @@
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useMemo, useRef } from 'react';
 import ReactFlow, {
   Background,
   Controls,
   MiniMap,
   useNodesState,
   useEdgesState,
-  MarkerType,
+  ConnectionLineType,
   Position,
+  Node,
+  Edge,
+  useReactFlow,
+  ReactFlowProvider,
 } from 'reactflow';
 import dagre from 'dagre';
 import 'reactflow/dist/style.css';
+// 确保这个路径是对的，根据你的项目结构
 import { MindMapGraph } from '../../types/api';
+import CustomNode from './CustomNode';
 
 interface KnowledgeGraphProps {
   data: MindMapGraph;
   onNodeClick?: (nodeId: string) => void;
 }
 
-// --- 1. 智能关键词提取函数 (修复版) ---
+// 1. 文本清洗函数
 const cleanLabel = (text: string): string => {
   if (!text) return '未知节点';
-  
-  const original = text; // 备份原始文本
-
-  // 去掉常见的提问前缀
+  const original = text;
   let cleaned = text
-    .replace(/^(请|给我|详细|简单)?(介绍|解释|描述|说明)(一下)?/, '') 
+    .replace(/^(请|给我|详细|简单)?(介绍|解释|描述|说明)(一下)?/, '')
     .replace(/^(什么是|何为|什么叫)/, '')
     .replace(/^Test_/, '')
     .trim();
-
-  // 如果是 Markdown 标题，去掉 #
   cleaned = cleaned.replace(/^#+\s*/, '');
-
-  // 👇👇👇 关键修复：如果洗完之后变成空了（比如"详细解释"全被删了），就用回原文！
-  if (cleaned.length === 0) {
-      return original;
-  }
-  // 👆👆👆 修复结束
-
-  // 截断逻辑
-  if (cleaned.length > 8) {
-    return cleaned.slice(0, 8) + '...';
-  }
+  if (cleaned.length === 0) return original;
+  if (cleaned.length > 12) return cleaned.slice(0, 12) + '...';
   return cleaned;
 };
 
-// --- 2. Dagre 布局算法 ---
-const getLayoutedElements = (nodes: any[], edges: any[], direction = 'TB') => {
+// 2. 布局算法
+const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => {
   const dagreGraph = new dagre.graphlib.Graph();
   dagreGraph.setDefaultEdgeLabel(() => ({}));
 
-  //稍微调大一点节点尺寸，容纳更多字
-  const nodeWidth = 180;
+  const nodeWidth = 200;
   const nodeHeight = 60;
 
-  dagreGraph.setGraph({ rankdir: direction });
+  dagreGraph.setGraph({
+    rankdir: direction,
+    nodesep: 40,
+    ranksep: 100
+  });
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, { width: nodeWidth, height: nodeHeight });
@@ -67,125 +62,149 @@ const getLayoutedElements = (nodes: any[], edges: any[], direction = 'TB') => {
 
   dagre.layout(dagreGraph);
 
+  // 颜色判断逻辑
   const targetIds = new Set(edges.map((e) => e.target));
-
+  const sourceIds = new Set(edges.map((e) => e.source));
+  
   const layoutedNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
     
-    // 判断 Root
+    // Root: 没有入边
     const isRoot = !targetIds.has(node.id);
-    
-    // 判断是否是"详细解释"节点 (根据 type)
-    const isExplanation = node.data?.type === 'explanation';
+    // Leaf: 没有出边
+    const isLeaf = !sourceIds.has(node.id);
+    // Focus: 是叶子节点且不是根节点，或者后端显式指定为 explanation
+    const isExplanation = node.data?.type === 'explanation' || (isLeaf && !isRoot);
+
+    let variant = 'default';
+    if (isRoot) variant = 'root';
+    else if (isExplanation) variant = 'explanation';
 
     return {
       ...node,
-      targetPosition: direction === 'TB' ? Position.Top : Position.Left,
-      sourcePosition: direction === 'TB' ? Position.Bottom : Position.Right,
+      type: 'custom',
+      targetPosition: Position.Left,
+      sourcePosition: Position.Right,
       position: {
         x: nodeWithPosition.x - nodeWidth / 2,
         y: nodeWithPosition.y - nodeHeight / 2,
       },
-      style: {
-        // Root: 绿色; Explanation: 橙色/黄色; Keyword: 蓝色/白色
-        background: isRoot ? '#e8f5e9' : (isExplanation ? '#fff3e0' : '#fff'),
-        border: isRoot ? '2px solid #2e7d32' : (isExplanation ? '1px solid #ff9800' : '1px solid #ddd'),
-        borderRadius: '8px',
-        width: '160px',
-        height: '50px',
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        fontSize: isRoot ? '14px' : '12px',
-        fontWeight: isRoot ? 'bold' : 'normal',
-        color: '#333',
-        boxShadow: isRoot ? '0 4px 8px rgba(0,255,0,0.2)' : '0 2px 4px rgba(0,0,0,0.1)',
+      data: {
+        ...node.data,
+        label: cleanLabel(node.data?.label || node.data?.data?.label || ''),
+        variant: variant,
       },
-      data: { 
-        // 这里的 label 会经过 cleanLabel 处理
-        label: cleanLabel(node.data?.label || node.data?.data?.label || '') 
-      }
     };
   });
 
   return { nodes: layoutedNodes, edges };
 };
 
-const KnowledgeGraph: React.FC<KnowledgeGraphProps> = ({ data, onNodeClick }) => {
+// 3. 内部组件 (包含 Hooks)
+const GraphContent = ({ data, onNodeClick }: KnowledgeGraphProps) => {
+  const { fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
 
+  const nodeTypes = useMemo(() => ({ custom: CustomNode }), []);
+
   useEffect(() => {
-    if (data && data.nodes && data.nodes.length > 0) {
-      console.log("原始数据:", data);
+    if (!data || !data.nodes || data.nodes.length === 0) return;
 
-      const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
-        data.nodes,
-        data.edges,
-        'TB'
-      );
+    console.log("正在渲染图谱，节点数:", data.nodes.length);
 
-      setNodes(layoutedNodes);
-      setEdges(
-        layoutedEdges.map((edge: any) => {
-          // 根据关系类型设置不同的样式
-          const relType = edge.label || '';
-          const isKeyword = relType === 'HAS_KEYWORD';
-          
-          // HAS_CHILD: 实线，较粗，主色（蓝色）
-          // HAS_KEYWORD: 虚线，较细，辅助色（灰色）
-          const edgeStyle = isKeyword
-            ? {
-                stroke: '#9e9e9e',
-                strokeWidth: 1.5,
-                strokeDasharray: '5,5', // 虚线
-              }
-            : {
-                stroke: '#64b5f6', // 蓝色
-                strokeWidth: 2.5, // 较粗
-              };
-          
-          return {
-            ...edge,
-            type: 'smoothstep',
-            animated: true,
-            label: '', // 隐藏标签，通过样式区分
-            style: edgeStyle,
-            markerEnd: { 
-              type: MarkerType.ArrowClosed, 
-              color: isKeyword ? '#9e9e9e' : '#64b5f6' 
-            },
-          };
-        })
-      );
-    }
-  }, [data, setNodes, setEdges]);
+    const initialNodes: Node[] = data.nodes.map((n: any) => ({
+      id: n.id,
+      position: { x: 0, y: 0 },
+      data: { ...n.data, label: n.data?.label || n.id },
+    }));
 
-  // 处理节点点击
+    const initialEdges: Edge[] = data.edges.map((e: any) => ({
+      id: e.id || `${e.source}-${e.target}`,
+      source: e.source,
+      target: e.target,
+      label: e.label,
+    }));
+
+    const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
+      initialNodes,
+      initialEdges,
+      'LR'
+    );
+
+    setNodes([...layoutedNodes]);
+    
+    setEdges(
+      layoutedEdges.map((edge) => {
+        const relType = edge.label || '';
+        const isKeyword = relType === 'HAS_KEYWORD';
+        return {
+          ...edge,
+          type: 'default',
+          animated: !isKeyword,
+          style: {
+            stroke: isKeyword ? '#cbd5e1' : '#60a5fa',
+            strokeWidth: isKeyword ? 1 : 2,
+            strokeDasharray: isKeyword ? '5,5' : undefined,
+          },
+        };
+      })
+    );
+
+    setTimeout(() => {
+      fitView({ duration: 800 });
+    }, 100);
+
+  }, [
+    // 强制依赖 JSON 字符串来检测变化
+    JSON.stringify(data.nodes.map(n => n.id)), 
+    JSON.stringify(data.edges.map(e => e.id)),
+    fitView,
+    setNodes,
+    setEdges
+  ]);
+
   const handleNodeClick = useCallback(
-    (_event: React.MouseEvent, node: any) => {
-      if (onNodeClick) {
-        onNodeClick(node.id);
-      }
+    (_event: React.MouseEvent, node: Node) => {
+      if (onNodeClick) onNodeClick(node.id);
     },
     [onNodeClick]
   );
 
   return (
-    <div style={{ width: '100%', height: '100%', minHeight: '500px', background: '#f8f9fa' }}>
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onNodeClick={handleNodeClick}
-        fitView
-        attributionPosition="bottom-right"
-      >
-        <Background color="#e0e0e0" gap={20} />
-        <Controls showInteractive={false} />
-        <MiniMap nodeColor={() => '#e0e0e0'} />
-      </ReactFlow>
+    <ReactFlow
+      nodes={nodes}
+      edges={edges}
+      nodeTypes={nodeTypes}
+      onNodesChange={onNodesChange}
+      onEdgesChange={onEdgesChange}
+      onNodeClick={handleNodeClick}
+      connectionLineType={ConnectionLineType.SmoothStep}
+      fitView
+      attributionPosition="bottom-right"
+    >
+      <Background color="#cbd5e1" gap={20} size={1} />
+      <Controls showInteractive={false} className="bg-white shadow-lg border-none" />
+      <MiniMap
+        nodeColor={(n) => {
+          if (n.data.variant === 'root') return '#3b82f6';
+          if (n.data.variant === 'explanation') return '#fb923c';
+          return '#e2e8f0';
+        }}
+        maskColor="rgba(240, 240, 240, 0.6)"
+        className="bg-white border rounded-lg shadow-sm"
+      />
+    </ReactFlow>
+  );
+}; 
+
+// 4. 导出组件 wrapper (确保这里没有嵌套错误)
+const KnowledgeGraph: React.FC<KnowledgeGraphProps> = (props) => {
+  return (
+    <div style={{ width: '100%', height: '100%', minHeight: '600px', background: '#f8fafc' }}>
+      <ReactFlowProvider>
+        <GraphContent {...props} />
+      </ReactFlowProvider>
     </div>
   );
 };

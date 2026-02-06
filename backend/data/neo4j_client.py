@@ -94,20 +94,25 @@ class Neo4jClient:
         intent: Optional[str] = None, 
         mastery_score: float = 0.0, 
         timestamp: Optional[datetime] = None,
-        title: Optional[str] = None,   # 用于图谱显示的短标题
-        type: Optional[str] = "default" # 节点类型 (root, keyword, default)
+        title: Optional[str] = None,
+        type: Optional[str] = "default"
     ) -> None:
-        """保存对话节点 (支持 MindMap 扩展属性)"""
+        """保存对话/概念节点 (修复版：根据 type 动态打标签)"""
         if timestamp is None:
             timestamp = datetime.utcnow()
         
-        # 如果没有传 title，默认截取 content 的前20个字
         if not title:
             title = content[:20] + "..." if len(content) > 20 else content
+
+        # 根据 type 决定标签：如果是 concept 就打 :Concept 标签，否则打 :DialogueNode
+        label = "Concept" if type == "concept" else "DialogueNode"
+
         async with self.driver.session() as session:
+            # 使用 f-string 动态注入 Label (Cypher 不支持参数化 Label)
+            # 注意：node_id 必须是唯一的
             await session.run(
-                """
-                MERGE (n:DialogueNode {node_id: $node_id})
+                f"""
+                MERGE (n:{label} {{node_id: $node_id}})
                 SET n.user_id = $user_id,
                     n.role = $role,
                     n.content = $content,
@@ -129,16 +134,23 @@ class Neo4jClient:
             )
     
     async def link_dialogue_nodes(self, parent_node_id: str, child_node_id: str, fragment_id: Optional[str] = None) -> None:
-        """创建对话节点之间的父子关系"""
+        """
+        [修复版] 建立连接：移除标签限制，允许对话连知识、知识连知识
+        """
         async with self.driver.session() as session:
-            # 使用 node_id 属性匹配，而不是内部 id()
+            # ⭐ 核心修改：把 (n:DialogueNode) 改成 (n {node_id: ...})
+            # 这样不管它是 DialogueNode 还是 Concept，只要 ID 对得上，就能连！
             query = """
-                MATCH (parent:DialogueNode {node_id: $parent_node_id})
-                MATCH (child:DialogueNode {node_id: $child_node_id})
+                MATCH (parent {node_id: $parent_node_id})
+                MATCH (child {node_id: $child_node_id})
                 MERGE (parent)-[r:HAS_CHILD]->(child)
                 SET r.fragment_id = $fragment_id
             """
-            await session.run(query, parent_node_id=parent_node_id, child_node_id=child_node_id, fragment_id=fragment_id)
+            try:
+                await session.run(query, parent_node_id=parent_node_id, child_node_id=child_node_id, fragment_id=fragment_id)
+                logger.info(f"Link success: {parent_node_id} -> {child_node_id}")
+            except Exception as e:
+                logger.error(f"Link failed: {e}")
 
     async def get_dialogue_node(self, node_id: str) -> Optional[Dict]:
         """获取单个对话节点"""
@@ -147,37 +159,93 @@ class Neo4jClient:
             record = await result.single()
             return dict(record["n"]) if record else None
 
-    async def get_dialogue_tree(self, root_node_id: str, user_id: str, max_depth: int = 10) -> Optional[Dict]:
-        """获取对话树（递归查询）"""
+    async def get_dialogue_tree(self, root_node_id: str, user_id: str, max_depth: int = 6) -> Optional[Dict]:
+        """
+        [智能修复版] 获取图谱：自动修正 ID 后缀，无视标签和方向，全量抓取
+        """
         async with self.driver.session() as session:
-            root_result = await session.run(
-                "MATCH (n:DialogueNode {node_id: $node_id, user_id: $user_id}) RETURN n",
-                node_id=root_node_id, user_id=user_id
-            )
-            root_record = await root_result.single()
+            # =========================================================
+            # 1. 智能 ID 匹配 (Smart ID Resolution)
+            # 解决 Route 层可能乱加 _root 后缀导致查不到的问题
+            # =========================================================
+            potential_ids = [root_node_id]
+            
+            # 如果传入的有后缀，尝试去掉后缀
+            if root_node_id.endswith("_root"):
+                potential_ids.append(root_node_id.replace("_root", ""))
+            # 如果传入的没后缀，尝试加上后缀 (兼容旧数据)
+            else:
+                potential_ids.append(f"{root_node_id}_root")
+                
+            actual_root_id = None
+            root_record = None
+
+            # 挨个试，哪个能查到就用哪个
+            for pid in potential_ids:
+                result = await session.run("MATCH (n {node_id: $id}) RETURN n", id=pid)
+                root_record = await result.single()
+                if root_record:
+                    actual_root_id = pid
+                    # logger.info(f"ID Hit: {pid} (Original: {root_node_id})")
+                    break
+            
             if not root_record:
+                # logger.warning(f"MindMap lookup failed. Tried IDs: {potential_ids}")
                 return None
             
             root_node = dict(root_record["n"])
-            
-            async def get_children(parent_id: str, depth: int) -> List[Dict]:
-                if depth >= max_depth: return []
-                # 查询子节点时也使用 node_id
-                result = await session.run(
-                    "MATCH (parent:DialogueNode {node_id: $parent_id})-[:HAS_CHILD]->(child:DialogueNode) RETURN child ORDER BY child.timestamp",
-                    parent_id=parent_id
-                )
-                children = []
-                async for record in result:
-                    child_node = dict(record["child"])
-                    if child_node.get("node_id"):
-                        child_node["children"] = await get_children(child_node["node_id"], depth + 1)
-                        children.append(child_node)
-                return children
-            
-            root_node["children"] = await get_children(root_node_id, 0)
-            return root_node
+            root_node["children"] = [] 
 
+            # =========================================================
+            # 2. 万能递归查询 (Universal Traversal)
+            # 从找到的 actual_root_id 开始，抓取所有连通子图
+            # =========================================================
+            query = """
+                MATCH (root {node_id: $root_id})
+                MATCH path = (root)-[*0..6]-(node)
+                WHERE node.node_id IS NOT NULL 
+                RETURN path
+            """
+            
+            result = await session.run(query, root_id=actual_root_id)
+            
+            # 3. 内存组装树结构
+            nodes_map = {actual_root_id: root_node}
+            
+            async for record in result:
+                path = record["path"]
+                for rel in path.relationships:
+                    # 处理节点对象
+                    start_node = dict(rel.start_node)
+                    end_node = dict(rel.end_node)
+                    
+                    # 注册节点到 map
+                    for n in [start_node, end_node]:
+                        # 优先用 node_id，没有则用 name，再没有则用 element_id
+                        if "node_id" not in n:
+                            n["node_id"] = n.get("name", str(n.element_id if hasattr(n, 'element_id') else n.id))
+                        
+                        if n["node_id"] not in nodes_map:
+                            n["children"] = []
+                            # 默认样式处理
+                            if "type" not in n: n["type"] = "keyword"
+                            nodes_map[n["node_id"]] = n
+
+                    # 建立父子连接
+                    s_id = start_node["node_id"]
+                    e_id = end_node["node_id"]
+                    
+                    if s_id in nodes_map and e_id in nodes_map:
+                        parent = nodes_map[s_id]
+                        child = nodes_map[e_id]
+                        
+                        # 简单防重：避免 A->B 和 B->A 导致无限循环
+                        # 这里我们只做单纯的 append，前端 ReactFlow 会处理好布局
+                        if not any(c["node_id"] == e_id for c in parent["children"]):
+                            parent["children"].append(child)
+
+            return nodes_map[actual_root_id]
+        
     # ==============================
     # 辅助功能 (供兼容旧代码)
     # ==============================
