@@ -1,197 +1,99 @@
-# DeepStudy 前端开发指南
+# DeepStudy 前端
+
+React + TypeScript + Vite，聊天界面、知识图谱侧栏与学习画像弹层。
 
 ## 技术栈
 
 - **框架**: React 18 + TypeScript
-- **构建工具**: Vite
-- **路由**: React Router v6
-- **HTTP 客户端**: Axios
-- **图表**: ReactFlow
-- **Markdown 渲染**: react-markdown + KaTeX
+- **构建**: Vite
+- **HTTP**: Axios（API 封装）
+- **图谱**: ReactFlow
+- **Markdown**: react-markdown + KaTeX
 
 ## 项目结构
 
 ```
 frontend/
 ├── src/
-│   ├── components/      # UI 组件
-│   │   ├── Auth/        # 登录/注册
-│   │   ├── Chat/        # 聊天界面
-│   │   ├── MindMap/     # 思维导图
-│   │   └── Markdown/     # Markdown 渲染
-│   ├── services/        # API 服务
-│   ├── hooks/           # React Hooks
-│   ├── types/           # TypeScript 类型
-│   └── utils/           # 工具函数
-├── public/              # 静态资源
-│   └── bg.jpg          # 背景图片
-├── package.json
-└── vite.config.ts
+│   ├── components/
+│   │   ├── Chat/           # ChatInterface：对话、划词追问、学习画像
+│   │   ├── MindMap/        # KnowledgeGraph、CustomNode
+│   │   └── Markdown/       # TextFragment（Markdown + 公式 + 片段选择）
+│   ├── services/           # api.ts：chat、mindMap、profile API
+│   ├── types/              # api.ts、reactflow 类型
+│   └── hooks/              # useAuth（预留）
+├── public/
+└── package.json
 ```
 
 ## 快速开始
 
-### 安装依赖
-
 ```bash
 npm install
-```
-
-### 启动开发服务器
-
-```bash
 npm run dev
 ```
 
-应用将在 `http://localhost:5173` 启动。
-
-### 构建生产版本
+开发地址：http://localhost:5173
 
 ```bash
 npm run build
-```
-
-构建产物在 `dist/` 目录。
-
-### 预览生产构建
-
-```bash
 npm run preview
 ```
 
-## 核心组件说明
+构建产物在 `dist/`。
 
-### 1. App.tsx
+## 核心组件
 
-主应用组件，处理路由和认证状态：
-- 路由配置：`/login`, `/register`, `/` (聊天界面)
-- 认证状态检查：基于 `localStorage` 中的 `access_token`
-- 自动重定向：未认证用户跳转到登录页
+### App.tsx
 
-### 2. ChatInterface
+根组件：渲染背景与 `ChatInterface`，无路由与登录（当前单用户）。
 
-主聊天界面组件，包含：
-- **消息列表展示**：用户消息和 AI 回答
-- **输入框和发送功能**：支持 Enter 发送，Shift+Enter 换行
-- **思维导图侧边栏**：可折叠的知识图谱展示
-- **划词选择监听**：选中文本片段触发追问
-- **自动滚动**：新消息自动滚动到底部
-- **加载状态**：显示 AI 思考中的加载动画
+### ChatInterface
 
-### 3. TextFragment
+- **消息区**：用户消息与 AI 流式回答；Enter 发送，Shift+Enter 换行。
+- **侧栏**：「显示/隐藏图谱」切换；知识图谱由 ReactFlow 渲染，数据来自 `/api/mindmap/{conversationId}` 轮询。
+- **划词追问**：在回答中选中文本 → 弹出追问框 → 输入问题提交，请求流式 `/api/chat`（带 `parent_id`、`ref_fragment_id`、`selected_text`）。
+- **学习画像与学习计划**：「学习画像」打开弹层，左右双栏。左侧为概念列表（`GET /api/profile/summary`），每条可「删除」或「加入计划」；支持将左侧概念**拖拽**到右侧。右侧为学习计划（`GET /api/profile/plan`），可「移出计划」。计划存后端，多设备同步。
 
-Markdown 文本片段组件，功能：
-- **渲染 Markdown**：支持标题、列表、代码块等
-- **数学公式渲染**：使用 KaTeX 渲染 LaTeX 公式
-- **代码高亮**：代码块语法高亮
-- **唯一 ID 注入**：为代码块和公式注入 `frag_xxx` ID
-- **文本选择监听**：监听用户选中文本，触发 `onFragmentSelect` 回调
+### TextFragment
 
-### 4. KnowledgeGraph
+- 渲染 Markdown，代码块与公式注入 `frag_xxx` ID。
+- 监听选中文本，回调 `onFragmentSelect(fragmentId, selectedText)` 用于划词追问。
 
-知识图谱组件，使用 ReactFlow：
-- **接收后端数据**：接收 `nodes` 和 `edges` 数据
-- **可视化展示**：使用 ReactFlow 渲染图谱
-- **节点交互**：支持节点点击、拖拽等交互
-- **掌握度显示**：节点颜色反映掌握度评分
+### KnowledgeGraph
 
-### 5. API 服务
+- 接收 `MindMapGraph`（nodes/edges）与可选 `planConcepts`（学习计划概念名列表）；用 ReactFlow 展示，节点掌握度等样式见 CustomNode。若节点对应概念在 `planConcepts` 中，CustomNode 以淡绿色卡片背景显示。
 
-`src/services/api.ts` 封装了所有 API 调用：
-- **自动添加 JWT token**：从 `localStorage` 读取并添加到请求头
-- **Token 过期处理**：401 错误时清除 token 并跳转登录
-- **统一错误处理**：捕获并格式化错误信息
-- **类型安全**：所有 API 调用使用 TypeScript 类型定义
+## API 封装（services/api.ts）
 
-**主要 API 方法**：
-- `register(username, email, password)`: 用户注册
-- `login(username, password)`: 用户登录
-- `sendMessage(query, parentId?, refFragmentId?, sessionId)`: 发送聊天消息
-- `getConversation(conversationId)`: 获取对话树
+- **chatAPI**
+  - `sendMessageStream(data, onChunk)`：流式发送，`data` 含 `query`、`parent_id`、`ref_fragment_id`、`selected_text`、`session_id`。
+  - `getConversationTree(conversationId)`：获取对话树（当前未在前端主流程使用）。
+- **mindMapAPI**
+  - `getMindMap(conversationId)`：获取思维导图 nodes/edges。
+- **profileAPI**
+  - `getSummary()`：学习画像概念列表。
+  - `deleteConcept(concept)`：从画像删除该概念（请求体 `{ concept }`）。
+  - `getPlan()`：学习计划概念名列表。
+  - `addToPlan(concept)`：将概念加入学习计划。
+  - `removeFromPlan(concept)`：从学习计划移除概念。
 
 ## 环境变量
 
-创建 `.env.local` 文件（可选，开发环境通常不需要）：
+可选 `.env.local`：
 
 ```env
 VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
-**注意**：Vite 使用 `VITE_` 前缀的环境变量，且需要在代码中通过 `import.meta.env.VITE_API_BASE_URL` 访问。
+未设置时默认使用 `/api`（依赖 Vite 或 Nginx 代理到后端）。
 
-## 开发规范
+## 开发与规范
 
-1. **代码风格**: 使用 ESLint + Prettier
-2. **类型安全**: 所有 API 调用使用 TypeScript 类型
-3. **组件复用**: 遵循单一职责原则
-4. **错误处理**: 统一使用 try-catch 和错误提示
-5. **样式管理**: 使用内联样式（当前实现）或 CSS Modules
-
-## 样式说明
-
-### 背景图片
-
-- 背景图片位于 `public/bg.jpg`
-- 全局背景通过 `App.css` 中的 `.app-background` 类应用
-- 使用高斯模糊效果（`filter: blur(10px)`）
-- 前景内容通过 `.app-content` 类确保清晰显示
-
-### 组件样式
-
-当前实现使用内联样式，主要特点：
-- **卡片式布局**：登录/注册页面使用卡片容器
-- **统一配色**：使用一致的色彩方案
-- **响应式设计**：适配不同屏幕尺寸
-- **加载动画**：使用 CSS 动画实现加载效果
+- ESLint；TypeScript 严格类型。
+- 组件职责单一；错误在界面提示（如画像加载失败、删除失败）。
 
 ## 常见问题
 
-### 1. 跨域问题
-
-开发环境下，Vite 已配置代理（如需要），将 `/api` 请求转发到后端 `http://localhost:8000`。
-
-如果遇到跨域问题：
-- 检查后端 CORS 配置
-- 确认后端服务已启动
-- 检查浏览器控制台的错误信息
-
-### 2. Token 管理
-
-- Token 存储在 `localStorage` 中，键名为 `access_token`
-- Token 过期后（401 错误），自动清除并跳转到登录页
-- 登录成功后，Token 自动保存到 `localStorage`
-
-### 3. ReactFlow 样式
-
-确保在组件中导入 ReactFlow 样式：
-
-```typescript
-import 'reactflow/dist/style.css';
-```
-
-### 4. 热重载不工作
-
-- 检查 Vite 开发服务器是否正常运行
-- 确认文件保存后触发了重新编译
-- 尝试重启开发服务器
-
-### 5. 构建失败
-
-- 检查 TypeScript 类型错误：`npm run build` 会先运行 `tsc`
-- 检查 ESLint 错误：`npm run lint`
-- 确认所有依赖已正确安装：`npm install`
-
-## 调试技巧
-
-1. **React DevTools**：安装浏览器扩展，查看组件状态
-2. **Network 面板**：检查 API 请求和响应
-3. **Console 面板**：查看错误日志和调试信息
-4. **Vite HMR**：利用热模块替换快速查看修改效果
-
-## 下一步优化
-
-- [ ] 添加错误边界（Error Boundary）
-- [ ] 实现消息分页加载
-- [ ] 优化大文本渲染性能
-- [ ] 添加消息编辑和删除功能
-- [ ] 实现会话管理（多会话切换）
+- **接口 404/跨域**：确认后端已启动、CORS 包含前端地址；开发时可用 Vite 代理将 `/api` 指向 `http://localhost:8000`。
+- **图谱不更新**：对话流中收到 `conversation_id` 后会轮询 mindmap；确认侧栏已打开。

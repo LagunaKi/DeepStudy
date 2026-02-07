@@ -20,6 +20,7 @@ import CustomNode from './CustomNode';
 
 interface KnowledgeGraphProps {
   data: MindMapGraph;
+  planConcepts?: string[];
   onNodeClick?: (nodeId: string) => void;
 }
 
@@ -66,14 +67,11 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
   const targetIds = new Set(edges.map((e) => e.target));
   const sourceIds = new Set(edges.map((e) => e.source));
   
-  const layoutedNodes = nodes.map((node) => {
+    const layoutedNodes = nodes.map((node) => {
     const nodeWithPosition = dagreGraph.node(node.id);
     
-    // Root: 没有入边
     const isRoot = !targetIds.has(node.id);
-    // Leaf: 没有出边
     const isLeaf = !sourceIds.has(node.id);
-    // Focus: 是叶子节点且不是根节点，或者后端显式指定为 explanation
     const isExplanation = node.data?.type === 'explanation' || (isLeaf && !isRoot);
 
     let variant = 'default';
@@ -92,7 +90,8 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
       data: {
         ...node.data,
         label: cleanLabel(node.data?.label || node.data?.data?.label || ''),
-        variant: variant,
+        variant,
+        inPlan: node.data?.inPlan === true,
       },
     };
   });
@@ -101,7 +100,7 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
 };
 
 // 3. 内部组件 (包含 Hooks)
-const GraphContent = ({ data, onNodeClick }: KnowledgeGraphProps) => {
+const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) => {
   const { fitView } = useReactFlow();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -111,12 +110,15 @@ const GraphContent = ({ data, onNodeClick }: KnowledgeGraphProps) => {
   useEffect(() => {
     if (!data || !data.nodes || data.nodes.length === 0) return;
 
-    console.log("正在渲染图谱，节点数:", data.nodes.length);
-
+    const labelOrId = (n: any) => n.data?.label || n.id;
     const initialNodes: Node[] = data.nodes.map((n: any) => ({
       id: n.id,
       position: { x: 0, y: 0 },
-      data: { ...n.data, label: n.data?.label || n.id },
+      data: {
+        ...n.data,
+        label: n.data?.label || n.id,
+        inPlan: planConcepts && planConcepts.length > 0 ? planConcepts.includes(labelOrId(n)) : false,
+      },
     }));
 
     const initialEdges: Edge[] = data.edges.map((e: any) => ({
@@ -156,9 +158,9 @@ const GraphContent = ({ data, onNodeClick }: KnowledgeGraphProps) => {
     }, 100);
 
   }, [
-    // 强制依赖 JSON 字符串来检测变化
-    JSON.stringify(data.nodes.map(n => n.id)), 
+    JSON.stringify(data.nodes.map(n => n.id)),
     JSON.stringify(data.edges.map(e => e.id)),
+    JSON.stringify(planConcepts || []),
     fitView,
     setNodes,
     setEdges

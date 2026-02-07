@@ -6,7 +6,7 @@ import json
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from backend.config import settings
-from backend.api.routes import chat, mindmap, knowledge
+from backend.api.routes import chat, mindmap, knowledge, profile
 from backend.data.sqlite_db import init_db
 
 # 配置日志
@@ -40,6 +40,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(chat.router, prefix="/api")
 app.include_router(mindmap.router, prefix="/api")
+app.include_router(profile.router, prefix="/api")
 
 
 @app.on_event("startup")

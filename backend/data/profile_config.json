@@ -1,0 +1,11 @@
+{
+  "activity_weights": {
+    "explain": [0.08, 0.04, 0.02],
+    "derive": [0.04, 0.09, 0.03],
+    "practice": [0.04, 0.05, 0.08],
+    "recall": [0.05, 0.02, 0.0]
+  },
+  "embedding_similarity_threshold": 0.88,
+  "decay_half_life_days": 0
+}
+

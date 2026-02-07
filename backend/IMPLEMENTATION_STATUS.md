@@ -1,323 +1,163 @@
 # 实现状态报告
 
-本文档记录 DeepStudy 项目的当前实现状态、缺省实现、预留接口和已知限制。
+本文档记录 DeepStudy 后端当前实现状态、缺省实现与已知限制。
 
 ## 当前实现状态
 
 ### 已完成功能
 
-1. **用户认证系统**
-   - 用户注册（用户名、邮箱、密码）
-   - 用户登录（JWT Token）
-   - 密码哈希存储（bcrypt）
-   - 邮箱唯一性验证
+1. **对话与流式输出**
+   - `POST /api/chat`：支持首轮提问与划词追问，统一流式返回（`meta` / `delta` / `full` / `end`）
+   - 首轮：意图识别 → 策略生成 → 流式输出；后处理做概念提炼、画像更新、Neo4j 写入
+   - 划词追问：带 `parent_id`、`ref_fragment_id`、`selected_text`；从 Neo4j 取父节点内容作上下文，流式生成后做递归概念提炼与画像更新
 
-2. **数据存储架构**
-   - SQLite：仅存储用户数据（users 表）
-   - Neo4j：存储对话记录和知识图谱
-   - 对话树结构：使用 DialogueNode 节点和 HAS_CHILD 关系
+2. **思维导图**
+   - `GET /api/mindmap/{conversation_id}`：从 Neo4j 查对话树，融合学习画像（U/R/A、score、times），返回 `MindMapGraph`（nodes/edges）
+   - 数据来源：DialogueNode + HAS_CHILD / HAS_KEYWORD，按会话根节点展开
 
-3. **Agent 编排框架**
-   - IntentRouter：意图识别框架（当前缺省实现）
-   - 策略模式：ConceptStrategy、CodeStrategy、DerivationStrategy
-   - Orchestrator：协调意图识别、策略选择和响应生成
-   - Neo4j 集成：自动保存对话节点和关系
+3. **学习画像**
+   - SQLite：`concept_profiles`（concept_key, user_id, u, r, a, times, last_practice）、`conversation_concepts`（conversation_id, concept_key, user_id）
+   - `GET /api/profile/summary`：当前用户概念列表（按得分排序）
+   - `GET /api/profile/weak?limit=`：薄弱概念（按 U 升序）
+   - `DELETE /api/profile/concepts`（Body: `{ "concept": "..." }`）：仅删 `concept_profiles`，保留 `conversation_concepts`
+   - `GET /api/profile/graph`：画像图结构（节点列表）
 
-4. **API 路由**
-   - `/api/auth/register`：用户注册
-   - `/api/auth/login`：用户登录
-   - `/api/chat`：发送聊天消息（支持普通提问和划词追问）
-   - `/api/chat/conversation/{conversation_id}`：获取对话树
+4. **学习计划**
+   - SQLite：`learning_plan`（user_id, concept_key），用户手动维护的概念列表，多设备/刷新同步
+   - `GET /api/profile/plan`：返回学习计划概念名列表
+   - `POST /api/profile/plan`（Body: `{ "concept": "..." }`）：将概念加入计划
+   - `DELETE /api/profile/plan`（Body: `{ "concept": "..." }`）：从计划移除
+   - 前端：学习画像弹层左右双栏（左侧概念列表、右侧学习计划），支持拖拽入计划与「加入计划」「移出计划」；知识图谱接收 `planConcepts`，计划内概念节点以淡绿色卡片背景显示
 
-5. **前端界面**
-   - 登录/注册页面（卡片式布局，背景图片）
-   - 聊天界面（消息展示、输入框、侧边栏）
-   - 知识图谱可视化（ReactFlow，待完善）
+5. **概念提炼与归一化**
+   - 首轮：LLM 提炼 root + children（`CONCEPT_EXTRACTION_FIRST_TURN`），写入画像并记录到 `conversation_concepts`
+   - 划词追问：先取父/祖先 node_id（`get_ancestor_node_ids`），再按 `conversation_concepts` 查祖先概念；LLM 提炼（`CONCEPT_EXTRACTION_RECURSIVE`）时鼓励使用已有概念名、可返回 `alias_suggestions`；长度过滤（>20 字丢弃）
+   - 归一化：词法规范化 + `profile_aliases.json` 别名字典 + 可选 Embedding 相似度合并；LLM 建议的别名可动态追加到 JSON 并触发 `reload_aliases()`
 
-## 缺省实现（简化实现）
+6. **Neo4j 集成**
+   - `save_dialogue_node`、`link_dialogue_nodes`（HAS_CHILD，可选 fragment_id）
+   - `get_dialogue_node(node_id)`：单节点
+   - `get_dialogue_tree(root_node_id, user_id, max_depth)`：会话子图
+   - `get_ancestor_node_ids(node_id, max_depth)`：沿 HAS_CHILD 入边取祖先 node_id 列表
+
+7. **Prompt 管理**
+   - 所有 Agent 用到的 Prompt 统一在 `backend/agent/prompts/system_prompts.py`（首轮/递归回答、首轮/递归概念提炼、各策略与知识提取模板）
+
+8. **API 路由**
+   - `/api/chat`（流式）、`/api/chat/conversation/{conversation_id}`（对话树）
+   - `/api/mindmap/{conversation_id}`（思维导图）
+   - `/api/profile/summary`、`/api/profile/weak`、`/api/profile/concepts`（DELETE）、`/api/profile/plan`（GET/POST/DELETE）、`/api/profile/graph`
+
+9. **认证与用户**
+   - 当前单用户：`user_id = "anonymous"`，未使用 JWT；auth 路由与 users 表预留
+
+---
+
+## 缺省或简化实现
 
 ### 1. 意图识别
 
 **位置**：`backend/agent/intent_router.py`
 
-**当前实现**：
-- 总是返回 `IntentType.CONCEPT`，不进行实际的 LLM 调用
-- 保留代码结构，便于后续完善
+**当前实现**：`route(query)` 固定返回 `IntentType.CONCEPT`，未调用 LLM。
 
-**预留接口**：
-```python
-async def route(self, query: str) -> IntentType:
-    # TODO: 实现真正的 Few-shot 意图识别
-    # 使用 LLM 分析用户问题，返回 derivation/code/concept
-```
+**影响**：所有请求走 ConceptStrategy，CodeStrategy、DerivationStrategy 仅在有其他入口时才会用到。
+
+**预留**：Few-shot 示例已写在 `_get_few_shot_examples()`，可改为真实 LLM 调用。
 
 ### 2. 知识三元组提取
 
-**位置**：`backend/agent/orchestrator.py`
+**位置**：`backend/agent/extractors/knowledge_extractor.py`（规则正则）、`orchestrator.py` 中首轮后处理仍会调用
 
-**当前实现**：
-- 返回空数组 `[]`
-- 不进行任何提取逻辑
+**当前实现**：规则抽取（主谓宾模式），首轮后处理会执行但三元组主要用于日志/预留；首轮概念来自 LLM 提炼（root+children），不是三元组 subject/object。划词追问概念完全由 LLM 提炼，不再用三元组。
 
-**预留接口**：
-```python
-# TODO: 提取知识三元组
-# 从 LLM 回答中提取结构化知识，格式：
-# [{"subject": "...", "relation": "...", "object": "..."}]
-```
+**影响**：知识图谱结构来自对话树与概念节点（Neo4j DialogueNode + HAS_KEYWORD 等），不是独立的三元组存储。
 
-### 3. 文本片段提取
+### 3. 文本片段（fragments）
 
-**位置**：`backend/agent/orchestrator.py`
+**位置**：策略返回的 `AgentResponse.fragments`
 
-**当前实现**：
-- 返回空数组 `[]`
-- 不进行任何片段识别和标记
+**当前实现**：策略可返回空列表；前端划词时由用户选中文本，请求中带 `ref_fragment_id` 与 `selected_text`，不依赖后端片段解析。
 
-**预留接口**：
-```python
-# TODO: 提取文本片段
-# 识别代码、公式、概念等片段，生成 ContentFragment 列表
-# 格式：[{"id": "frag_xxx", "type": "code", "content": "..."}]
-```
+**影响**：追问上下文依赖 Neo4j 父节点 content 与前端传入的 selected_text，不依赖后端对代码/公式片段的自动切分。
 
-### 4. 划词追问上下文获取
-
-**位置**：`backend/agent/orchestrator.py` 的 `process_recursive_query()`
-
-**当前实现**：
-- 使用简单的递归提示词
-- 不获取父对话上下文
-- 不获取片段内容
-
-**预留接口**：
-```python
-async def process_recursive_query(...):
-    # TODO: 获取父对话上下文
-    # 从 Neo4j 查询父对话的完整上下文路径
-    # TODO: 获取片段内容
-    # 根据 fragment_id 获取对应的文本片段内容
-```
-
-### 5. 知识图谱生成
-
-**位置**：`backend/agent/orchestrator.py`
-
-**当前实现**：
-- 不生成知识图谱数据
-- 不将知识三元组存储到 Neo4j
-
-**预留接口**：
-```python
-# TODO: 生成思维导图数据
-# 将知识三元组转换为 MindMapGraph 格式
-# 存储知识三元组到 Neo4j 作为 KnowledgeNode
-```
-
-### 6. 学习画像计算
+### 4. 学习诊断报告
 
 **位置**：未实现
 
-**预留接口**：
-- 基于对话树结构计算掌握度（mastery_score）
-- 生成学习诊断报告
-- 识别知识薄弱点
+**预留**：无 `/api/chat/diagnosis` 或 `/api/profile/diagnosis`；薄弱概念已有 `/api/profile/weak`，无成文诊断报告生成。
 
-## 预留接口列表
+---
+
+## 预留或未实现接口
 
 ### Data Layer
 
-#### Neo4j 客户端（`backend/data/neo4j_client.py`）
-
-1. **`get_dialogue_context_path()`**（待实现）
-   - 功能：获取从根节点到指定节点的完整路径
-   - 用途：划词追问时获取上下文
-   - 参数：`root_node_id: str, target_node_id: str`
-   - 返回：节点路径列表
-
-2. **`save_knowledge_triple()`**（待实现）
-   - 功能：保存知识三元组到 Neo4j
-   - 用途：构建知识图谱
-   - 参数：`subject: str, relation: str, object: str, user_id: str`
-   - 返回：None
-
-3. **`get_knowledge_graph()`**（待实现）
-   - 功能：获取用户的知识图谱
-   - 用途：可视化知识结构
-   - 参数：`user_id: str, topic: Optional[str] = None`
-   - 返回：知识图谱数据
+- **`get_dialogue_context_path(root_node_id, target_node_id)`**：未实现；当前划词追问仅用 `get_dialogue_node(parent_id)` 取父节点内容，以及 `get_ancestor_node_ids` 取祖先 id 用于查 `conversation_concepts`。
+- **独立知识三元组存储**：未在 Neo4j 中单独存 subject-relation-object；图谱由对话树与概念节点构成。
 
 ### Agent Layer
 
-#### IntentRouter（`backend/agent/intent_router.py`）
-
-1. **`route()`**（缺省实现）
-   - 当前：总是返回 CONCEPT
-   - 后续：实现真正的 Few-shot 意图识别
-
-#### Orchestrator（`backend/agent/orchestrator.py`）
-
-1. **`process_recursive_query()`**（部分实现）
-   - 当前：简单递归提示词
-   - 后续：获取父对话上下文和片段内容
-
-2. **知识三元组提取逻辑**（待实现）
-   - 从 LLM 回答中提取结构化知识
-
-3. **文本片段提取逻辑**（待实现）
-   - 识别和标记代码、公式、概念等片段
-
-4. **思维导图生成逻辑**（待实现）
-   - 将知识三元组转换为 MindMapGraph
+- **IntentRouter.route()**：缺省返回 CONCEPT，可改为 LLM Few-shot。
+- **策略返回的 fragments**：可为空，若需“可点击片段”可在此扩展。
 
 ### API Layer
 
-#### Chat 路由（`backend/api/routes/chat.py`）
+- **`/api/chat/diagnosis` 或 `/api/profile/diagnosis`**：学习诊断报告接口未实现。
 
-1. **`/api/chat/mindmap`**（待实现）
-   - 功能：获取知识图谱数据
-   - 用途：前端可视化
-
-2. **`/api/chat/diagnosis`**（待实现）
-   - 功能：获取学习诊断报告
-   - 用途：学习画像展示
+---
 
 ## 已知限制
 
-### 1. Llama-index 导入问题
+### 1. 意图识别固定为 CONCEPT
 
-**问题**：
-- `llama-index` 版本兼容性问题导致 `ChatMessage` 导入失败
-- 当前 `chat` 和 `mindmap` 路由被注释，避免导入错误
+所有请求均按概念型处理，推导型/代码型未通过意图路由区分。若需按题型分流，需实现 `IntentRouter.route()` 的 LLM 调用。
 
-**影响**：
-- 无法使用完整的 LlamaIndex 功能
-- 需要修复版本兼容性或改用直接 API 调用
+### 2. 概念提炼依赖 LLM 质量
 
-**解决方案**：
-- 选项 1：修复 `llama-index` 版本兼容性
-- 选项 2：创建简单的 LLM 包装类，直接调用 ModelScope API
+首轮与递归概念均来自 LLM JSON；若模型输出格式不稳定或含长句，虽有长度过滤与“优先用祖先概念”的约束，仍可能出现噪音概念。别名建议依赖模型是否返回 `alias_suggestions`。
 
-### 2. 意图识别缺省实现
+### 3. 对话树查询规模
 
-**问题**：
-- 所有问题都被识别为 CONCEPT 类型
-- 无法根据问题类型选择不同的处理策略
+`get_dialogue_tree` 与 `get_ancestor_node_ids` 均有 `max_depth` 限制（如 6）；会话极深时可能只覆盖部分结构，可按需调整或做分页。
 
-**影响**：
-- 代码型和推导型问题可能无法得到最佳回答
-- 无法充分利用 CodeStrategy 和 DerivationStrategy
+### 4. Neo4j 不可用时的降级
 
-**解决方案**：
-- 实现真正的 Few-shot 意图识别
-- 或使用规则匹配作为临时方案
+后处理中 Neo4j 写入失败会打日志并降级（如只写 SQLite 画像、不写对话节点）；流式响应已返回，但图谱与对话树会不完整。无“仅 SQLite”的完整降级路径。
 
-### 3. 知识三元组和片段提取缺失
+### 5. 单用户与认证
 
-**问题**：
-- 无法从 LLM 回答中提取结构化知识
-- 无法识别和标记文本片段
+当前全局使用 `anonymous`，无多用户隔离；JWT 与 auth 路由存在但未接入主流程。
 
-**影响**：
-- 知识图谱无法构建
-- 划词追问功能受限
-- 学习画像无法生成
+---
 
-**解决方案**：
-- 使用 LLM 进行后处理提取
-- 或使用专门的 NER/关系抽取模型
+## 后续扩展建议
 
-### 4. 对话树查询性能
+### 短期
 
-**问题**：
-- `get_dialogue_tree()` 使用递归查询，深度较大时可能性能较差
+- 实现真正的意图识别（IntentRouter 调用 LLM），按意图走 Code/Derivation 策略。
+- 可选：首轮也做三元组抽取并写入 Neo4j（与现有概念节点并存），用于更细粒度图谱。
 
-**影响**：
-- 对话树较深时查询可能较慢
+### 中期
 
-**解决方案**：
-- 添加深度限制
-- 使用分页查询
-- 缓存常用查询
+- 学习诊断报告：基于 profile + 对话树生成简要诊断文案，并增加 `/api/profile/diagnosis` 或类似接口。
+- 多用户：接入 JWT，user_id 从 token 解析，画像与 conversation_concepts 按 user_id 隔离。
 
-### 5. 错误处理
+### 长期
 
-**问题**：
-- Neo4j 连接失败时整个请求失败（严格模式）
-- 没有降级方案
+- 向量检索：对话或概念向量化，支持语义检索与相似问题推荐。
+- 测试与文档：关键路径单测、API 示例与错误码说明。
 
-**影响**：
-- Neo4j 不可用时系统完全不可用
-
-**解决方案**：
-- 考虑添加降级方案（如临时存储到 SQLite）
-- 或改进错误提示，引导用户重试
-
-## 后续扩展计划
-
-### 短期（Demo 完善）
-
-1. **修复 Llama-index 导入问题**
-   - 解决版本兼容性
-   - 恢复 `chat` 和 `mindmap` 路由
-
-2. **实现基础的知识三元组提取**
-   - 使用 LLM 后处理提取
-   - 存储到 Neo4j
-
-3. **实现基础的文本片段提取**
-   - 识别代码块、公式、概念
-   - 生成片段 ID
-
-### 中期（功能完善）
-
-1. **完善意图识别**
-   - 实现真正的 Few-shot 意图识别
-   - 提高识别准确率
-
-2. **完善划词追问**
-   - 从 Neo4j 获取父对话上下文
-   - 获取片段内容并注入提示词
-
-3. **实现知识图谱生成**
-   - 将知识三元组存储到 Neo4j
-   - 生成可视化数据
-
-### 长期（高级功能）
-
-1. **实现学习画像**
-   - 基于对话树计算掌握度
-   - 生成诊断报告
-   - 识别知识薄弱点
-
-2. **实现向量检索**
-   - 使用向量数据库存储对话内容
-   - 支持语义搜索和相似问题推荐
-
-3. **实现多模态支持**
-   - 支持图片、公式识别
-   - 支持代码执行和可视化
+---
 
 ## 技术债务
 
-1. **代码重复**
-   - 三个策略类有相似的实现
-   - 可以考虑提取公共逻辑
+- 策略类间存在重复模式，可抽公共基类或工具函数。
+- 错误响应格式可统一（如统一错误码与 message 结构）。
+- 无自动化测试；关键逻辑（如概念归一化、祖先链查询）适合加单测。
 
-2. **错误处理不统一**
-   - 不同层的错误处理方式不一致
-   - 需要统一错误响应格式
-
-3. **测试覆盖**
-   - 当前没有单元测试
-   - 需要添加测试用例
-
-4. **文档完善**
-   - API 文档需要补充
-   - 需要添加使用示例
+---
 
 ## 总结
 
-当前实现已经完成了基础的问答功能框架，包括用户认证、对话存储（Neo4j）、Agent 编排和 API 路由。主要功能可以运行，但许多高级功能（知识提取、学习画像等）仍处于缺省实现状态。
-
-后续开发应优先解决 Llama-index 导入问题，然后逐步完善知识提取、意图识别等核心功能，最终实现完整的学习诊断系统。
+当前后端已实现：流式对话（首轮 + 划词追问）、基于 Neo4j 的对话树与思维导图、基于 SQLite 的学习画像与学习计划（含 conversation_concepts、learning_plan、概念归一化与别名动态追加）、首轮/递归的 LLM 概念提炼与画像更新；前端学习画像弹层双栏与拖拽、图谱学习计划概念淡绿高亮。缺省或未实现部分主要为：真实意图识别、独立知识三元组存储、学习诊断报告接口、多用户认证接入。已知限制集中在意图单一、概念质量依赖 LLM、Neo4j 降级与单用户假设。

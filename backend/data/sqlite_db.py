@@ -51,7 +51,7 @@ async def init_db():
     """初始化数据库表结构"""
     db = await get_db()
     
-    # 创建用户表
+    # 创建用户表（当前保留结构，登录已移除，仅作为示例与预留）
     await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -61,7 +61,40 @@ async def init_db():
             created_at TEXT NOT NULL
         )
     """)
-    
+
+    # 创建概念画像表（单用户场景下，以 concept_key + user_id 作为主键）
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS concept_profiles (
+            concept_key TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            u REAL NOT NULL,
+            r REAL NOT NULL,
+            a REAL NOT NULL,
+            times INTEGER NOT NULL,
+            last_practice TEXT,
+            PRIMARY KEY (concept_key, user_id)
+        )
+    """)
+
+    # 对话 id → 该轮涉及的概念（用于检索父/祖先节点画像概念）
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS conversation_concepts (
+            conversation_id TEXT NOT NULL,
+            concept_key TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            PRIMARY KEY (conversation_id, concept_key, user_id)
+        )
+    """)
+
+    # 用户学习计划（手动维护的概念列表，用于多设备同步与图谱高亮）
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS learning_plan (
+            user_id TEXT NOT NULL,
+            concept_key TEXT NOT NULL,
+            PRIMARY KEY (user_id, concept_key)
+        )
+    """)
+
     await db.commit()
     await db.close()
 

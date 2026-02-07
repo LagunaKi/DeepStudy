@@ -125,3 +125,16 @@ export interface MindMapEdge {
   label?: string
   [key: string]: any
 }
+
+/**
+ * 概念画像摘要（与后端 /profile/summary 一致）
+ */
+export interface ConceptProfileSummary {
+  concept: string
+  u: number
+  r: number
+  a: number
+  times: number
+  last_practice: string | null
+  score: number
+}

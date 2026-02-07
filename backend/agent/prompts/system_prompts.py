@@ -30,6 +30,56 @@ RECURSIVE_PROMPT = """用户针对之前的回答中的某个片段进行了追�
 4. 保持回答的简洁和精准
 """
 
+# 递归追问时的用户消息：带选中文本
+RECURSIVE_ANSWER_WITH_SELECTION = """{recursive_prompt}
+
+之前的回答: {parent_context}
+
+用户选中的文本: {selected_text}
+
+用户追问: {query}
+
+请针对性地回答："""
+
+# 递归追问时的用户消息：仅有父上下文
+RECURSIVE_ANSWER_WITH_CONTEXT = """{recursive_prompt}
+
+之前的回答: {parent_context}
+
+用户追问: {query}
+
+请针对性地回答："""
+
+# 递归追问时的用户消息：无上下文
+RECURSIVE_ANSWER_QUERY_ONLY = """{recursive_prompt}
+
+用户追问: {query}
+
+请针对性地回答："""
+
+# 首轮概念提炼（从问答中提取 root + children）
+CONCEPT_EXTRACTION_FIRST_TURN = """基于以下问答，提炼出一个核心概念节点和3-5个关键子概念节点。
+
+问题: {query}
+回答: {full_answer}
+
+请严格只返回 JSON 格式，不要包含 Markdown 标记。格式如下：
+{{
+    "root": "核心概念(简短名词)",
+    "children": ["子概念1", "子概念2", "子概念3"]
+}}
+"""
+
+# 递归追问概念提炼（可带祖先概念提示与 alias_suggestions）
+CONCEPT_EXTRACTION_RECURSIVE = """基于以下追问与回答，提炼出一个核心概念节点和若干关键子概念节点。
+问题: {query}
+回答: {full_answer_truncated}{ancestor_hint}
+
+请严格只返回 JSON，不要包含 Markdown。格式：
+{{"root": "核心概念(简短名词)", "children": ["子概念1", "子概念2", ...], "alias_suggestions": [{{"alias": "同义写法", "canonical": "规范名"}}]}}
+其中 alias_suggestions 为可选，仅当存在明显同义概念（如「mfcc特征提取」与「mfcc」）时填写，否则为 []。
+"""
+
 KNOWLEDGE_EXTRACTION_PROMPT = """你是一个知识图谱构建专家。
 请从用户的问题和AI的回答中提取知识三元组（主语-谓语-宾语），用于构建知识图谱。
 

@@ -8,6 +8,7 @@ import {
   AgentResponse,
   MindMapGraph,
   DialogueNodeBase,
+  ConceptProfileSummary,
 } from '../types/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -120,5 +121,47 @@ export const mindMapAPI = {
       `/mindmap/${conversationId}`
     )
     return response.data
+  },
+}
+
+/**
+ * 学习画像 API
+ */
+export const profileAPI = {
+  /**
+   * 获取当前用户的概念画像摘要列表（正在学习的概念）
+   */
+  getSummary: async (): Promise<ConceptProfileSummary[]> => {
+    const response = await apiClient.get<ConceptProfileSummary[]>('/profile/summary')
+    return response.data
+  },
+
+  /**
+   * 从学习画像中删除指定概念（仅删画像行，保留追溯）
+   */
+  deleteConcept: async (concept: string): Promise<void> => {
+    await apiClient.delete('/profile/concepts', { data: { concept } })
+  },
+
+  /**
+   * 获取学习计划（概念名列表）
+   */
+  getPlan: async (): Promise<string[]> => {
+    const response = await apiClient.get<string[]>('/profile/plan')
+    return response.data
+  },
+
+  /**
+   * 将概念加入学习计划
+   */
+  addToPlan: async (concept: string): Promise<void> => {
+    await apiClient.post('/profile/plan', { concept })
+  },
+
+  /**
+   * 从学习计划中移除概念
+   */
+  removeFromPlan: async (concept: string): Promise<void> => {
+    await apiClient.delete('/profile/plan', { data: { concept } })
   },
 }

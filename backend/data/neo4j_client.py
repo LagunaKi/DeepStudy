@@ -152,6 +152,24 @@ class Neo4jClient:
             except Exception as e:
                 logger.error(f"Link failed: {e}")
 
+    async def get_ancestor_node_ids(self, node_id: str, max_depth: int = 6) -> List[str]:
+        """
+        从当前节点沿 HAS_CHILD 入边向上遍历，返回所有祖先的 node_id（不含当前节点）。
+        方向为 (ancestor)-[:HAS_CHILD]->(child)，故从 child 找 ancestor。
+        """
+        if not node_id:
+            return []
+        async with self.driver.session() as session:
+            result = await session.run(
+                """
+                MATCH (ancestor)-[:HAS_CHILD*1..%d]->(n {node_id: $node_id})
+                RETURN DISTINCT ancestor.node_id AS id
+                """ % max_depth,
+                node_id=node_id,
+            )
+            records = await result.data()
+        return [r["id"] for r in records if r.get("id")]
+
     async def get_dialogue_node(self, node_id: str) -> Optional[Dict]:
         """获取单个对话节点"""
         async with self.driver.session() as session:
