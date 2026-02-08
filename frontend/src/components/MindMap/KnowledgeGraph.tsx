@@ -125,7 +125,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
       id: e.id || `${e.source}-${e.target}`,
       source: e.source,
       target: e.target,
-      label: e.label,
+      label: '', // 清空所有边的标签，但保留连接线本身
     }));
 
     const { nodes: layoutedNodes, edges: layoutedEdges } = getLayoutedElements(
