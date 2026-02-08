@@ -34,24 +34,35 @@ async def get_mind_map(conversation_id: str):
     root_id = f"{conversation_id}_root"
     
     cypher = """
-    // 1. 优先查找根节点（_root 后缀）
-    MATCH (root:DialogueNode)
+    // 1. 首先确定根节点（优先查找 _root 节点）
+    OPTIONAL MATCH (root:DialogueNode)
     WHERE root.node_id = $root_id
     
-    // 2. 如果找不到 _root，则查找 conversation_id 节点并向上找父节点
+    // 2. 如果没有找到 _root，则查找 conversation_id 节点并向上追溯到根节点
     OPTIONAL MATCH (ai_node:DialogueNode {node_id: $cid})
-    OPTIONAL MATCH (ai_node)<-[:HAS_CHILD|HAS_KEYWORD]-(parent:DialogueNode)
+    OPTIONAL MATCH (ai_node)<-[:HAS_CHILD*0..5]-(parent:DialogueNode)
+    WHERE NOT (parent)<-[:HAS_CHILD]-()  // 确保这是根节点（没有父节点）
+    
+    // 3. 合并所有可能的根节点来源
     WITH coalesce(root, parent, ai_node) as actual_root
+    WHERE actual_root IS NOT NULL
     
-    // 3. 查找根节点的所有子节点和关系（使用 OPTIONAL MATCH 确保即使没有子节点也返回根节点）
-    OPTIONAL MATCH (actual_root)-[r:HAS_CHILD|HAS_KEYWORD]->(child:DialogueNode)
+    // 4. 从根节点开始，获取所有可达节点（使用递归模式）
+    MATCH (actual_root)-[:HAS_CHILD|HAS_KEYWORD*0..10]-(connected_node:DialogueNode)
+    WITH collect(DISTINCT connected_node) + collect(DISTINCT actual_root) as all_nodes_coll
     
-    // 4. 返回根节点和所有子节点（即使没有子节点也返回根节点）
+    // 5. 展开所有节点并获取它们的关系
+    UNWIND all_nodes_coll as node
+    WITH collect(DISTINCT node) as all_nodes  // 去重
+    UNWIND all_nodes as node
+    OPTIONAL MATCH (node)-[r:HAS_CHILD|HAS_KEYWORD]->(child:DialogueNode)
+    
+    // 6. 返回所有节点及其子节点
     RETURN 
-        actual_root.node_id as source_id, 
-        actual_root.title as source_title, 
-        actual_root.content as source_content,
-        actual_root.type as source_type,
+        node.node_id as source_id, 
+        node.title as source_title, 
+        node.content as source_content,
+        node.type as source_type,
         
         child.node_id as target_id, 
         child.title as target_title,

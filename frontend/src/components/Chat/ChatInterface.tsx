@@ -48,15 +48,26 @@ const ChatInterface = () => {
   
   // 这个函数负责把“新来的数据”缝合到“旧数据”上
   const mergeData = (oldData: MindMapGraph, newData: MindMapGraph): MindMapGraph => {
-    // 1. 建立 Map 用于去重 (ID 为 Key)
+    // 1. 分离系统节点和用户节点
+    const systemNodes = oldData.nodes.filter(n => !n.id.startsWith('node_')); // 不是以'node_'开头的是系统节点
+    const userNodes = oldData.nodes.filter(n => n.id.startsWith('node_')); // 以'node_'开头的是用户节点
+    
+    const systemEdges = oldData.edges.filter(e => !e.id.startsWith('edge_')); // 不是以'edge_'开头的是系统边
+    const userEdges = oldData.edges.filter(e => e.id.startsWith('edge_')); // 以'edge_'开头的是用户边
+
+    // 2. 建立 Map 用于去重新数据 (ID 为 Key)
     const nodeMap = new Map<string, MindMapNode>();
     const edgeMap = new Map<string, MindMapEdge>();
 
-    // 2. 先把旧数据放进去
-    oldData.nodes.forEach(n => nodeMap.set(n.id, n));
-    oldData.edges.forEach(e => edgeMap.set(`${e.source}-${e.target}`, e));
+    // 3. 先把用户节点和用户边放进去（这些需要保留）
+    userNodes.forEach(n => nodeMap.set(n.id, n));
+    userEdges.forEach(e => {
+      // 使用稳定的键值，避免因为顺序变化导致的冲突
+      const edgeKey = `${e.source}-${e.target}`;
+      edgeMap.set(edgeKey, e);
+    });
 
-    // 3. 再把新数据放进去 (如果有重复 ID，新数据会覆盖旧数据，这很好，因为可能有状态更新)
+    // 4. 再把新数据放进去 (系统数据)
     newData.nodes.forEach(n => {
         // 🎨 样式补丁：如果是第一个节点，给它 root 样式；其他的给 explanation 样式
         // 这样可以保证根节点永远是蓝色的，新长出来的都是橙色的
@@ -72,9 +83,16 @@ const ChatInterface = () => {
         });
     });
 
-    newData.edges.forEach(e => edgeMap.set(`${e.source}-${e.target}`, e));
+    // 5. 处理新边，确保它们引用的节点存在
+    newData.edges.forEach(e => {
+      // 检查源节点和目标节点是否都存在
+      if (nodeMap.has(e.source) && nodeMap.has(e.target)) {
+        const edgeKey = `${e.source}-${e.target}`;
+        edgeMap.set(edgeKey, e);
+      }
+    });
 
-    // 4. 返回合并后的结果
+    // 6. 返回合并后的结果（包含用户节点和新系统数据）
     return {
         nodes: Array.from(nodeMap.values()),
         edges: Array.from(edgeMap.values())
@@ -98,8 +116,12 @@ const ChatInterface = () => {
             // 执行合并
             const merged = mergeData(prev, data);
             
-            // 只有当节点数量真的变多了，才更新 State (防止死循环渲染)
-            if (merged.nodes.length !== prev.nodes.length || merged.edges.length !== prev.edges.length) {
+            // 检查是否有实质性变化，避免不必要的更新
+            const hasNewNodes = merged.nodes.some(n => !prev.nodes.some(pn => pn.id === n.id));
+            const hasNewEdges = merged.edges.some(e => !prev.edges.some(pe => pe.id === e.id));
+            const hasDifferentLength = merged.nodes.length !== prev.nodes.length || merged.edges.length !== prev.edges.length;
+            
+            if (hasNewNodes || hasNewEdges || hasDifferentLength) {
                 // console.log(`图谱更新: 从 ${prev.nodes.length} -> ${merged.nodes.length} 个节点`);
                 return merged;
             }
@@ -108,6 +130,7 @@ const ChatInterface = () => {
         }
       } catch (err) {
         // 轮询出错不报错，静默重试
+        console.error('获取思维导图数据失败:', err);
       }
     };
 
