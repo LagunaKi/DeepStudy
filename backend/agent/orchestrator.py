@@ -498,12 +498,17 @@ class AgentOrchestrator:
         parent_id: str,
     ):
         """
-        递归追问的后处理：LLM 概念提炼（优先归类到祖先概念）+ 学习画像更新 + 图谱构建
+        [完美缝合版] 递归追问后处理：
+        1. 概念提炼 (参考祖先、计算画像)
+        2. 画像更新 (更新学习状态)
+        3. 图谱构建 (显式创建 _root 节点供前端渲染)
         """
         logger.info("[stream] 开始后处理递归追问：概念提炼、画像更新与图谱构建...")
         
         try:
-            # 1. 取父/祖先 node_id，查对应轮次的画像概念
+            # =====================================================
+            # 1. 准备工作：获取祖先概念 (队友的新功能)
+            # =====================================================
             ancestor_ids: list[str] = []
             if parent_id:
                 try:
@@ -511,21 +516,31 @@ class AgentOrchestrator:
                 except Exception as e:
                     logger.warning("[stream] 获取祖先节点失败，仅用 parent_id: %s", str(e))
                     ancestor_ids = [parent_id]
+            
             ancestor_concepts: list[str] = []
             if ancestor_ids:
-                ancestor_concepts = await get_concepts_by_conversation_ids(ancestor_ids, user_id=user_id)
-                logger.info("[stream] 祖先概念数量: %d", len(ancestor_concepts))
+                # 这里假设 get_concepts_by_conversation_ids 是队友新加的函数
+                try:
+                    ancestor_concepts = await get_concepts_by_conversation_ids(ancestor_ids, user_id=user_id)
+                except:
+                    pass
 
-            # 2. LLM 提炼概念（鼓励优先使用祖先概念，且不输出长句）
+            # =====================================================
+            # 2. LLM 概念提炼 (队友的新逻辑)
+            # =====================================================
             concepts: list[str] = []
+            root_label = ""
+            children = []
+            
             try:
                 ancestor_hint = ""
                 if ancestor_concepts:
                     ancestor_hint = (
-                        "\n以下为父/祖先对话中已出现的概念，请优先直接使用这些名称（可出现在 root 或 children 中）：\n"
+                        "\n以下为父/祖先对话中已出现的概念，请优先直接使用这些名称：\n"
                         f"{json.dumps(ancestor_concepts[:30], ensure_ascii=False)}\n"
-                        "仅当有真正新概念时才输出新名称。概念名须为简短名词或名词短语，不要输出长句或句片段。"
                     )
+                
+                # 使用递归专用的 Prompt
                 extraction_prompt = CONCEPT_EXTRACTION_RECURSIVE.format(
                     query=query,
                     full_answer_truncated=full_answer[:2000],
@@ -534,76 +549,122 @@ class AgentOrchestrator:
                 summary_res = await self.llm.acomplete(extraction_prompt)
                 summary_text = summary_res.text if hasattr(summary_res, "text") else str(summary_res)
                 summary_text = summary_text.replace("```json", "").replace("```", "").strip()
+                
                 structure = json.loads(summary_text)
                 root_label = structure.get("root", "").strip()
                 children = structure.get("children") or []
+                
                 if root_label:
                     concepts.append(root_label)
                 for c in children:
                     if isinstance(c, str) and c.strip():
                         concepts.append(c.strip())
-                # 长度过滤：超过 20 字视为长句，丢弃
-                max_concept_len = 20
-                concepts = [c for c in concepts if len(c) <= max_concept_len]
-                logger.info("[stream] 递归追问概念提炼成功: %s", concepts)
-                # 可选：追加 LLM 建议的别名并重载
+                
+                # 过滤长句
+                concepts = [c for c in concepts if len(c) <= 20]
+                
+                # 队友的别名逻辑
                 alias_suggestions = structure.get("alias_suggestions") or []
-                if isinstance(alias_suggestions, list) and alias_suggestions:
+                if alias_suggestions:
                     try:
                         append_aliases_and_reload(alias_suggestions)
-                    except Exception as alias_err:
-                        logger.warning("[stream] 追加别名失败: %s", alias_err)
+                    except: 
+                        pass
+                        
             except Exception as e:
                 logger.warning("[stream] 递归追问概念提炼失败: %s", str(e), exc_info=True)
 
-            activity = await classify_activity(
-                self.llm, query, full_answer[:300] if full_answer else None
-            )
-            if activity is None:
-                activity = "explain"
-            learning_delta = await apply_learning_event_to_concepts(
-                raw_concepts=concepts,
-                activity=activity,
-                user_id=user_id,
-                conversation_id=conversation_id,
-            )
-            node_mastery_score = (learning_delta.u + learning_delta.r + learning_delta.a) / 3.0
-
-            # 3. 保存基础对话结构 (User -> AI) 到 Neo4j（降级模式）
+            # =====================================================
+            # 3. 更新学习画像并计算分数 (队友的新逻辑)
+            # =====================================================
+            node_mastery_score = 0.0
             try:
-                user_node_id = f"{conversation_id}_user"
-                ai_node_id = conversation_id
-
-                await neo4j_client.save_dialogue_node(
-                    node_id=user_node_id,
-                    user_id=user_id,
-                    role="user",
-                    content=query,
-                    intent="recursive",
-                    mastery_score=node_mastery_score,
+                activity = await classify_activity(
+                    self.llm, query, full_answer[:300] if full_answer else None
                 )
+                if activity is None: activity = "explain"
+                
+                learning_delta = await apply_learning_event_to_concepts(
+                    raw_concepts=concepts,
+                    activity=activity,
+                    user_id=user_id,
+                    conversation_id=conversation_id,
+                )
+                node_mastery_score = (learning_delta.u + learning_delta.r + learning_delta.a) / 3.0
+            except Exception as e:
+                logger.warning(f"[stream] 画像更新失败: {e}")
 
+            # =====================================================
+            # 4. 保存基础对话结构 (User -> AI)
+            # =====================================================
+            user_node_id = f"{conversation_id}_user"
+            ai_node_id = conversation_id
+
+            await neo4j_client.save_dialogue_node(
+                node_id=user_node_id,
+                user_id=user_id,
+                role="user",
+                content=query,
+                intent="recursive",
+                mastery_score=node_mastery_score,
+            )
+
+            await neo4j_client.save_dialogue_node(
+                node_id=ai_node_id,
+                user_id=user_id,
+                role="assistant",
+                content=full_answer,
+                intent="recursive",
+                type="explanation",
+                mastery_score=node_mastery_score,
+            )
+
+            await neo4j_client.link_dialogue_nodes(user_node_id, ai_node_id)
+            if parent_id:
+                await neo4j_client.link_dialogue_nodes(parent_id, user_node_id)
+
+            # =====================================================
+            # 5. ⭐⭐⭐ 找回的逻辑：构建思维导图节点 ⭐⭐⭐
+            # 关键：必须创建 _root 节点，前端才能画出图来！
+            # =====================================================
+            if root_label:
+                mindmap_root_id = f"{conversation_id}_root"
+                
+                # 创建思维导图的根节点 (type='root')
                 await neo4j_client.save_dialogue_node(
-                    node_id=ai_node_id,
+                    node_id=mindmap_root_id,
                     user_id=user_id,
                     role="assistant",
-                    content=full_answer,
-                    intent="recursive",
-                    type="explanation",
-                    mastery_score=node_mastery_score,
+                    content=root_label, 
+                    title=root_label,
+                    type="root",
+                    mastery_score=node_mastery_score
                 )
+                
+                # 把这个根节点挂在 AI 的回答下面
+                await neo4j_client.link_dialogue_nodes(ai_node_id, mindmap_root_id)
 
-                await neo4j_client.link_dialogue_nodes(user_node_id, ai_node_id)
-                if parent_id:
-                    await neo4j_client.link_dialogue_nodes(parent_id, user_node_id)
+                # 创建并连接所有子概念 (type='keyword')
+                for child_concept in children:
+                    # 简单处理：使用 uuid 确保 ID 唯一，防止同名概念冲突导致图结构混乱
+                    child_id = str(uuid.uuid4())
+                    
+                    await neo4j_client.save_dialogue_node(
+                        node_id=child_id,
+                        user_id=user_id,
+                        role="assistant",
+                        content=child_concept,
+                        title=child_concept,
+                        type="keyword",
+                        mastery_score=node_mastery_score
+                    )
+                    
+                    # 连线：Root -> Child
+                    await neo4j_client.link_dialogue_nodes(mindmap_root_id, child_id)
 
-                logger.info("[stream] 递归追问对话与画像保存到 Neo4j 成功")
-            except Exception as e:
-                logger.warning(
-                    "[stream] 保存递归追问对话到Neo4j失败（已降级处理）: %s",
-                    str(e),
-                    exc_info=True,
-                )
+                logger.info(f"[stream] 思维导图节点构建完成: Root={root_label}, Children={len(children)}")
+            else:
+                logger.warning("[stream] 未提取到 Root 概念，跳过思维导图节点创建")
 
         except Exception as e:
             logger.warning(
