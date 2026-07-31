@@ -77,12 +77,20 @@ const TriangleRadar = ({ u, r, a }: { u: number; r: number; a: number }) => {
 
 const CARD_WIDTH = 200;
 
-const CustomNode = ({ data, isConnectable }: NodeProps) => {
+interface CustomNodeData {
+  label: string;
+  inPlan?: boolean;
+  variant?: keyof typeof styles.variants;
+  type?: string;
+  profile?: { u: number; r: number; a: number; score: number; times: number };
+}
+
+const CustomNode = ({ data, isConnectable }: NodeProps<CustomNodeData>) => {
   const [hovered, setHovered] = useState(false);
   const [cardPosition, setCardPosition] = useState({ top: 0, left: 0 });
   const wrapperRef = useRef<HTMLDivElement>(null);
 
-  const inPlan = (data as any).inPlan === true;
+  const inPlan = data.inPlan === true;
   const variant = inPlan ? 'plan' : (data.variant || (data.type === 'root' ? 'root' : 'explanation'));
   const currentStyle = {
     ...styles.wrapper,
@@ -90,9 +98,7 @@ const CustomNode = ({ data, isConnectable }: NodeProps) => {
     position: 'relative' as const,
   };
 
-  const profile = (data as any).profile as
-    | { u: number; r: number; a: number; score: number; times: number }
-    | undefined;
+  const profile = data.profile;
 
   const handleMouseEnter = () => {
     if (wrapperRef.current) {

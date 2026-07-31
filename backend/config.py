@@ -3,10 +3,11 @@
 使用 pydantic-settings 管理环境变量
 支持本地开发和 Docker 容器部署
 """
-from pydantic_settings import BaseSettings
-from pathlib import Path
-from typing import List
 import os
+from pathlib import Path
+from typing import Literal
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 # 检测是否在容器环境中运行
@@ -30,22 +31,28 @@ def get_storage_path(relative_path: str) -> str:
 
 class Settings(BaseSettings):
     """应用配置"""
-    
-    # ModelScope API 配置
-    MODELSCOPE_API_KEY: str = "ms-9b769e50-465c-4108-b47e-dc40e7bf22fd" 
-    MODELSCOPE_API_BASE: str = "https://api-inference.modelscope.cn/v1"
-    
-    # 模型选择
-    MODEL_NAME: str = "Qwen/Qwen2.5-72B-Instruct"
-    CODER_MODEL_NAME: str = "Qwen/Qwen2.5-Coder-32B-Instruct"
+
+    model_config = SettingsConfigDict(
+        env_file=("backend/.env", ".env"),
+        case_sensitive=True,
+        extra="ignore",
+    )
+
+    # Gemini Developer API 免费层。密钥必须来自环境变量。
+    GEMINI_API_KEY: str = ""
+
+    # Gemini 3 Flash 提供免费 API 层；preview 模型可能被 Google 后续替换。
+    LLM_MODEL: str = "gemini-3-flash-preview"
+    LLM_CODER_MODEL: str = "gemini-3-flash-preview"
+    GEMINI_THINKING_LEVEL: Literal["minimal", "low", "medium", "high"] = "medium"
     
     # Neo4j 配置（容器内使用 localhost）
     NEO4J_URI: str = "bolt://localhost:7687"
     NEO4J_USER: str = "neo4j"
-    NEO4J_PASSWORD: str = "neo4j123"  # 默认密码，可通过环境变量覆盖
+    NEO4J_PASSWORD: str = "deepstudy-dev-only"
     
-    # JWT 配置（提供默认值，生产环境必须通过环境变量覆盖）
-    JWT_SECRET_KEY: str = "default-secret-key-change-in-production"
+    # JWT 尚未进入主流程；启用认证前必须通过环境变量设置密钥。
+    JWT_SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRATION_HOURS: int = 24
     
@@ -88,11 +95,4 @@ class Settings(BaseSettings):
                 # 本地开发：允许特定来源
                 self.CORS_ORIGINS = '["http://localhost:5173","http://localhost:3000"]'
     
-    class Config:
-        env_file = "backend/.env"
-        case_sensitive = True
-        # 允许通过环境变量覆盖字段
-        extra = "allow"
-
-
 settings = Settings()

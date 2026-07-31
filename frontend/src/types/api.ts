@@ -113,17 +113,17 @@ export interface MindMapNode {
     label: string
     mastery?: number 
     variant?: string 
-    [key: string]: any
+    [key: string]: unknown
   }
   position: { x: number; y: number }
-  [key: string]: any
+  [key: string]: unknown
 }
 export interface MindMapEdge {
   id: string
   source: string
   target: string
   label?: string
-  [key: string]: any
+  [key: string]: unknown
 }
 
 /**

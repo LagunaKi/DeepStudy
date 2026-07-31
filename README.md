@@ -1,12 +1,16 @@
 # DeepStudy
 
-基于 ModelScope 的递归学习 Agent：支持首轮/划词追问、知识图谱与学习画像。
+基于 Gemini 3 Flash 的递归学习 Agent：支持首轮/划词追问、知识图谱与学习画像。
+
+> 当前正在从黑客松 Demo 升级为基于 LangGraph、GraphRAG 与分层记忆的
+> 自适应学习 Agent。完整方案见
+> [优化路线图](docs/OPTIMIZATION_ROADMAP.md)。
 
 ## 技术栈
 
 - **前端**: React + TypeScript + ReactFlow + Vite
 - **后端**: FastAPI + Python
-- **模型**: Qwen/Qwen3-32B（ModelScope OpenAI 兼容 API）
+- **模型**: Gemini 3 Flash（Gemini Developer API 免费层）
 - **数据库**: Neo4j（对话与知识图谱）+ SQLite（用户数据与学习画像）
 - **认证**: 当前单用户场景（anonymous），JWT 预留
 
@@ -63,35 +67,40 @@ conda create -n deepstudy python=3.10 && conda activate deepstudy
 pip install -r backend/requirements.txt
 ```
 
-在项目根或 `backend/` 下创建 `.env`：
+复制安全配置模板：
+
+```bash
+cp .env.example backend/.env
+```
+
+然后在 `backend/.env` 中设置：
 
 ```env
-MODELSCOPE_API_KEY=your_api_key_here
-MODELSCOPE_API_BASE=https://api-inference.modelscope.cn/v1
-MODEL_NAME=Qwen/Qwen3-32B
-CODER_MODEL_NAME=Qwen/Qwen3-32B
-
-NEO4J_URI=bolt://localhost:7687
-NEO4J_USER=neo4j
-NEO4J_PASSWORD=deepstudy123
-
-JWT_SECRET_KEY=your_jwt_secret_key_here
-JWT_ALGORITHM=HS256
-JWT_EXPIRATION_HOURS=24
-
-SQLITE_DB_PATH=./backend/storage/deepstudy.db
-VECTOR_STORE_PATH=./backend/storage/vector_store
-
-CORS_ORIGINS=["http://localhost:5173","http://localhost:3000"]
-API_HOST=0.0.0.0
-API_PORT=8000
+GEMINI_API_KEY=your_gemini_api_key_here
+LLM_MODEL=gemini-3-flash-preview
+LLM_CODER_MODEL=gemini-3-flash-preview
+GEMINI_THINKING_LEVEL=medium
 ```
+
+完整环境变量以 [.env.example](.env.example) 为准。
+
+### Docker Compose 一键启动
+
+```bash
+cp .env.example .env
+# 编辑 .env 并填写 GEMINI_API_KEY
+docker compose up --build
+```
+
+应用：http://localhost:7860
+
+Neo4j Browser：http://localhost:7474
 
 ### 3. Neo4j
 
 ```bash
 docker run -d --name deepstudy-neo4j -p 7474:7474 -p 7687:7687 \
-  -e NEO4J_AUTH=neo4j/deepstudy123 neo4j:5.15.0
+  -e NEO4J_AUTH=neo4j/deepstudy-dev-only neo4j:5.26-community
 ```
 
 ### 4. 启动后端
@@ -124,6 +133,15 @@ npm run dev
 
 - [前端开发指南](frontend/README.md)
 - [后端开发指南](backend/README.md)
+- [优化路线图](docs/OPTIMIZATION_ROADMAP.md)
+
+## 质量检查
+
+```bash
+make test
+make build
+make compose-config
+```
 
 ## 开发规范
 
@@ -134,5 +152,6 @@ npm run dev
 ## 常见问题
 
 - **Neo4j 连不上**：确认容器运行、端口与 `.env` 中密码一致。
-- **ModelScope 报错**：检查 `MODELSCOPE_API_KEY`、`MODELSCOPE_API_BASE` 与网络。
+- **Gemini 401/403**：检查 `GEMINI_API_KEY` 是否来自 Google AI Studio。
+- **Gemini 429**：免费层额度已用完，请等待额度窗口重置并在 AI Studio 查看限制。
 - **前端连不上后端**：确认后端已启动、CORS 包含前端地址；前端 API 基址见 `frontend` README。

@@ -63,7 +63,7 @@ export const chatAPI = {
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
 
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       buffer += decoder.decode(value, { stream: true })
@@ -79,7 +79,6 @@ export const chatAPI = {
           onChunk(payload)
         } catch (e) {
           // 忽略单行解析错误，避免中断整个流
-          // eslint-disable-next-line no-console
           console.warn('解析流式数据失败:', e, line)
         }
       }
@@ -92,7 +91,6 @@ export const chatAPI = {
         const payload = JSON.parse(rest)
         onChunk(payload)
       } catch (e) {
-        // eslint-disable-next-line no-console
         console.warn('解析流式数据失败(尾部):', e, rest)
       }
     }

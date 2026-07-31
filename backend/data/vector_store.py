@@ -21,7 +21,6 @@ from llama_index.core import (
     load_index_from_storage, 
     Settings
 )
-from llama_index.llms.openai import OpenAI
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from backend.config import settings 
 
@@ -73,15 +72,8 @@ class VectorStoreManager:
         if not os.path.exists(self.persist_dir):
             os.makedirs(self.persist_dir, exist_ok=True)
         
-        # 1. 配置大脑 (LLM) -> 指向 ModelScope
-        model_scope_llm = OpenAI(
-            model=settings.CODER_MODEL_NAME,
-            api_key=settings.MODELSCOPE_API_KEY,
-            api_base=settings.MODELSCOPE_API_BASE,
-            temperature=0.1,
-            max_tokens=2048
-        )
-        Settings.llm = model_scope_llm
+        # 1. 当前向量库只负责 embedding 与检索，不需要额外调用生成模型。
+        Settings.llm = None
         
         # 2. 配置眼睛 (Embedding) -> 使用 BGE 中文模型（带重试）
         embed_model = load_embedding_model_with_retry(max_retries=3, retry_delay=10)

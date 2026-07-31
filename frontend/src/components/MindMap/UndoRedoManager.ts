@@ -1,7 +1,7 @@
 // UndoRedoManager.ts
 export interface NodeOperation {
   type: 'add' | 'delete' | 'update';
-  nodeData?: any;
+  nodeData?: Record<string, unknown>;
   nodeId?: string;
   parentId?: string;
 }

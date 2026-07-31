@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import axios from 'axios'
 import { chatAPI, mindMapAPI, profileAPI } from '../../services/api'
 import { AgentResponse, MindMapGraph, MindMapNode, MindMapEdge, ConceptProfileSummary } from '../../types/api'
 import TextFragment from '../Markdown/TextFragment'
@@ -49,10 +50,8 @@ const ChatInterface = () => {
   // 这个函数负责把“新来的数据”缝合到“旧数据”上
   const mergeData = (oldData: MindMapGraph, newData: MindMapGraph): MindMapGraph => {
     // 1. 分离系统节点和用户节点
-    const systemNodes = oldData.nodes.filter(n => !n.id.startsWith('node_')); // 不是以'node_'开头的是系统节点
     const userNodes = oldData.nodes.filter(n => n.id.startsWith('node_')); // 以'node_'开头的是用户节点
     
-    const systemEdges = oldData.edges.filter(e => !e.id.startsWith('edge_')); // 不是以'edge_'开头的是系统边
     const userEdges = oldData.edges.filter(e => e.id.startsWith('edge_')); // 以'edge_'开头的是用户边
 
     // 2. 建立 Map 用于去重新数据 (ID 为 Key)
@@ -176,7 +175,7 @@ const ChatInterface = () => {
             }
         }
     }
-  }, [messages]) 
+  }, [messages, loading, hasFirstChunk])
 
   const handleSend = async (refFragmentId?: string, selectedText?: string, queryOverride?: string) => {
     const query = (queryOverride || input).trim()
@@ -257,10 +256,10 @@ const ChatInterface = () => {
         }
       )
 
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('发送消息失败:', error)
       setUserMessages(prev => prev.slice(0, -1))
-      if (error?.response?.status === 404) {
+      if (axios.isAxiosError(error) && error.response?.status === 404) {
         setError('聊天功能暂时不可用，请稍后再试')
       } else {
         setError('发送消息失败，请稍后再试')

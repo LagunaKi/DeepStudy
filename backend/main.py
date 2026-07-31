@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # 创建 FastAPI 应用
 app = FastAPI(
     title="DeepStudy API",
-    description="基于 ModelScope 的递归学习 Agent",
-    version="0.1.0"
+    description="基于 Gemini 3 Flash 的递归学习 Agent",
+    version="0.2.0"
 )
 
 # 注册知识库路由（在 CORS 之前）
@@ -48,12 +48,12 @@ async def startup_event():
     """应用启动时初始化数据库"""
     logger.info("应用启动，初始化数据库...")
     
-    # 打印关键配置信息（用于验证环境变量是否正确读取）
-    logger.info(f"[配置] MODELSCOPE_API_KEY: {settings.MODELSCOPE_API_KEY[:10]}...{settings.MODELSCOPE_API_KEY[-4:]}")
-    logger.info(f"[配置] MODEL_NAME: {settings.MODEL_NAME}")
-    logger.info(f"[配置] NEO4J_URI: {settings.NEO4J_URI}")
-    logger.info(f"[配置] SQLITE_DB_PATH: {settings.SQLITE_DB_PATH}")
-    logger.info(f"[配置] CORS_ORIGINS: {settings.CORS_ORIGINS}")
+    # 只记录非敏感配置，禁止输出密钥的任何片段。
+    logger.info("[配置] LLM_MODEL: %s", settings.LLM_MODEL)
+    logger.info("[配置] GEMINI_THINKING_LEVEL: %s", settings.GEMINI_THINKING_LEVEL)
+    logger.info("[配置] NEO4J_URI: %s", settings.NEO4J_URI)
+    logger.info("[配置] SQLITE_DB_PATH: %s", settings.SQLITE_DB_PATH)
+    logger.info("[配置] CORS_ORIGINS: %s", settings.CORS_ORIGINS)
     
     await init_db()
     logger.info("数据库初始化完成")
@@ -62,7 +62,7 @@ async def startup_event():
 @app.get("/")
 async def root():
     """根路径"""
-    return {"message": "DeepStudy API", "version": "0.1.0"}
+    return {"message": "DeepStudy API", "version": "0.2.0"}
 
 
 @app.get("/health")

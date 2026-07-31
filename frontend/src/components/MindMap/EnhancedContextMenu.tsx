@@ -1,5 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Position, Node } from 'reactflow';
+import { useState, useEffect, useRef } from 'react';
 import './ContextMenu.css';
 
 interface EnhancedContextMenuProps {
@@ -182,6 +181,16 @@ const EnhancedContextMenu: React.FC<EnhancedContextMenuProps> = ({
                 onKeyDown={(e) => e.key === 'Enter' && handleEditNode()}
               >
                 编辑节点内容
+              </div>
+              <div
+                className="menu-item"
+                onClick={handleStartConnection}
+                tabIndex={0}
+                role="button"
+                aria-label="从当前节点开始连线"
+                onKeyDown={(e) => e.key === 'Enter' && handleStartConnection()}
+              >
+                从此节点连线
               </div>
 
             </>

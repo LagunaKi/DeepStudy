@@ -25,13 +25,11 @@ class Neo4jClient:
         self._password = settings.NEO4J_PASSWORD
         self.driver = None
         
-        # 检查是否禁用认证（Docker 环境默认禁用）
+        # 仅在显式配置时禁用认证，禁止因运行在 Docker 中而自动绕过认证。
         auth_disabled = os.environ.get("NEO4J_AUTH_DISABLED", "").lower() in ("true", "1", "yes")
-        # 在 Docker 环境中默认禁用认证
-        is_docker = os.path.exists("/.dockerenv") or os.path.exists("/mnt/workspace")
         
         try:
-            if auth_disabled or is_docker:
+            if auth_disabled:
                 # 禁用认证模式：不传 auth 参数
                 self.driver = AsyncGraphDatabase.driver(self._uri)
                 logger.info(f"Neo4j driver initialized at {self._uri} (auth disabled)")

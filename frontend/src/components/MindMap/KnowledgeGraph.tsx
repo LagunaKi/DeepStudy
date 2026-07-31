@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useMemo, useState, useRef } from 'react';
+import { useEffect, useCallback, useMemo, useState } from 'react';
 import ReactFlow, {
   Background,
   Controls,
@@ -104,7 +104,7 @@ const getLayoutedElements = (nodes: Node[], edges: Edge[], direction = 'LR') => 
 
 // 3. 内部组件
 const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) => {
-  const { fitView, screenToFlowPosition, getNodes } = useReactFlow();
+  const { fitView, screenToFlowPosition } = useReactFlow();
   
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
@@ -122,9 +122,6 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
     sourcePosition?: { x: number; y: number };
   }>({ isConnecting: false });
 
-  // 记录上一次处理的数据ID，防止 React 严格模式下的重复渲染导致重复添加
-  const lastProcessedDataId = useRef<string | null>(null);
-
   const nodeTypes = useMemo(() => ({ custom: CustomNode }), []);
 
   // =========================================================================
@@ -140,7 +137,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
     if (!data || !data.nodes || data.nodes.length === 0) return;
 
     // 2. 转换新节点
-    const newRawNodes: Node[] = data.nodes.map((n: any) => ({
+    const newRawNodes: Node[] = data.nodes.map((n) => ({
       id: n.id,
       type: 'custom',
       position: { x: 0, y: 0 }, // 初始位置，稍后由 dagre 计算
@@ -152,7 +149,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
     }));
 
     // 3. 转换新边 & 关键分类（区分内部边与连接边）
-    const newRawEdges: Edge[] = data.edges.map((e: any) => ({
+    const newRawEdges: Edge[] = data.edges.map((e) => ({
       id: e.id || `${e.source}-${e.target}`,
       source: e.source,
       target: e.target,
@@ -188,7 +185,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
 
       // 7. 计算垂直偏移量 (放置在现有画布的最下方)
       let maxY = 0;
-      let startX = 0; // 如果想让新树居中，可以在这里计算 X 轴偏移
+      const startX = 0; // 如果想让新树居中，可以在这里计算 X 轴偏移
       
       if (prevNodes.length > 0) {
         // 找到最下面一个节点的 Y 坐标
@@ -244,7 +241,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
       fitView({ duration: 800, padding: 0.2 });
     }, 200);
 
-  }, [data, planConcepts, fitView]); 
+  }, [data, planConcepts, fitView, setEdges, setNodes]);
 
   // ... 后面的代码保持不变
   // =========================================================================
@@ -439,7 +436,7 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
       <Background color="#cbd5e1" gap={20} size={1} />
       <Controls showInteractive={false} className="bg-white shadow-lg border-none" />
       <MiniMap
-        nodeColor={(n: any) => {
+        nodeColor={(n: Node) => {
           if (n.data.variant === 'root') return '#3b82f6';
           if (n.data.variant === 'explanation') return '#fb923c';
           return '#e2e8f0';
@@ -455,8 +452,8 @@ const GraphContent = ({ data, planConcepts, onNodeClick }: KnowledgeGraphProps) 
       {connectionState.isConnecting && (
         <div 
           style={{ position: 'fixed', inset: 0, zIndex: 9998, cursor: 'crosshair' }}
-          onClick={(e: any) => handleCompleteConnection({ x: e.clientX, y: e.clientY })}
-          onContextMenu={(e: any) => { e.preventDefault(); handleCancelConnection(); }}
+          onClick={(e: React.MouseEvent<HTMLDivElement>) => handleCompleteConnection({ x: e.clientX, y: e.clientY })}
+          onContextMenu={(e: React.MouseEvent<HTMLDivElement>) => { e.preventDefault(); handleCancelConnection(); }}
         />
       )}
       

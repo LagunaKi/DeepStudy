@@ -95,7 +95,7 @@ const TextFragment: React.FC<TextFragmentProps> = ({
         rehypePlugins={[rehypeKatex]}
         components={{
           // 自定义代码块渲染
-          code: ({ node, className, children, ...props }) => {
+          code: ({ className, children, ...props }) => {
             const codeString = String(children).replace(/\n$/, '')
             const fragment = fragments.find((f) => f.content === codeString && f.type === 'code')
             const isInline = !className

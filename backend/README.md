@@ -1,12 +1,12 @@
 # DeepStudy 后端
 
-FastAPI + ModelScope LLM，负责流式对话、知识图谱写入、学习画像与概念归一化。
+FastAPI + Gemini 3 Flash，负责流式对话、知识图谱写入、学习画像与概念归一化。
 
 ## 技术栈
 
 - **框架**: FastAPI
-- **LLM**: 自定义 ModelScope OpenAI 兼容客户端（`agent/llm_client.py`）
-- **模型**: Qwen/Qwen3-32B（主模型与代码模型可配置）
+- **LLM**: Google Gen AI SDK（`agent/llm_client.py`）
+- **模型**: Gemini 3 Flash 免费 API 层（主模型与代码模型可配置）
 - **存储**: Neo4j（对话与图谱）、SQLite（用户表、概念画像、对话–概念关联）
 - **认证**: JWT 预留；当前单用户为 `anonymous`
 
@@ -25,7 +25,7 @@ backend/
 │   ├── orchestrator.py    # 流式编排、首轮/递归后处理、概念提炼
 │   ├── intent_router.py   # 意图识别（concept/code/derivation）
 │   ├── activity_classifier.py  # 学习活动分类（explain/derive/...）
-│   ├── llm_client.py      # ModelScope 调用
+│   ├── llm_client.py      # Gemini 异步与流式调用
 │   ├── prompts/
 │   │   └── system_prompts.py   # 所有 Prompt 模板（首轮/递归回答与概念提炼）
 │   ├── strategies/        # ConceptStrategy、CodeStrategy、DerivationStrategy
@@ -111,7 +111,7 @@ API 文档：http://localhost:8000/docs
 
 ## 环境变量
 
-- **ModelScope**: `MODELSCOPE_API_KEY`、`MODELSCOPE_API_BASE`、`MODEL_NAME`、`CODER_MODEL_NAME`
+- **Gemini**: `GEMINI_API_KEY`、`LLM_MODEL`、`LLM_CODER_MODEL`、`GEMINI_THINKING_LEVEL`
 - **Neo4j**: `NEO4J_URI`、`NEO4J_USER`、`NEO4J_PASSWORD`
 - **JWT**: `JWT_SECRET_KEY`、`JWT_ALGORITHM`、`JWT_EXPIRATION_HOURS`
 - **存储**: `SQLITE_DB_PATH`、`VECTOR_STORE_PATH`
@@ -126,7 +126,8 @@ API 文档：http://localhost:8000/docs
 ## 常见问题
 
 - **Neo4j 连接失败**：检查容器、端口、密码与 `NEO4J_AUTH`。
-- **ModelScope 400/401**：确认 API Key、Base URL；`enable_thinking` 已在客户端设为 false。
+- **Gemini 401/403**：确认 `GEMINI_API_KEY` 来自 Google AI Studio。
+- **Gemini 429**：免费层额度已用完，请等待额度窗口重置。
 - **导入错误**：在项目根目录运行 uvicorn，保证 `backend` 包可被解析。
 
 更多实现细节见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)（若存在）。

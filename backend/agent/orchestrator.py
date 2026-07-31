@@ -8,7 +8,7 @@ import json
 from typing import AsyncGenerator, Optional
 from datetime import datetime
 
-from backend.agent.llm_client import ModelScopeLLMClient
+from backend.agent.llm_client import GeminiLLMClient
 from backend.agent.intent_router import IntentRouter, IntentType
 from backend.agent.strategies import DerivationStrategy, CodeStrategy, ConceptStrategy
 from backend.agent.extractors import knowledge_extractor
@@ -45,20 +45,19 @@ class AgentOrchestrator:
         """初始化编排器"""
         logger.info("开始初始化 Orchestrator...")
 
-        logger.info(f"初始化主模型: {settings.MODEL_NAME}")
-        # 使用 OpenAI 兼容 API
-        self.llm = ModelScopeLLMClient(
-            model_name=settings.MODEL_NAME,
-            api_key=settings.MODELSCOPE_API_KEY,
-            api_base=settings.MODELSCOPE_API_BASE,
+        logger.info("初始化主模型: %s", settings.LLM_MODEL)
+        self.llm = GeminiLLMClient(
+            model_name=settings.LLM_MODEL,
+            api_key=settings.GEMINI_API_KEY,
+            thinking_level=settings.GEMINI_THINKING_LEVEL,
         )
         logger.info("主模型初始化成功")
 
-        logger.info(f"初始化 Coder 模型: {settings.CODER_MODEL_NAME}")
-        self.coder_llm = ModelScopeLLMClient(
-            model_name=settings.CODER_MODEL_NAME,
-            api_key=settings.MODELSCOPE_API_KEY,
-            api_base=settings.MODELSCOPE_API_BASE,
+        logger.info("初始化 Coder 模型: %s", settings.LLM_CODER_MODEL)
+        self.coder_llm = GeminiLLMClient(
+            model_name=settings.LLM_CODER_MODEL,
+            api_key=settings.GEMINI_API_KEY,
+            thinking_level=settings.GEMINI_THINKING_LEVEL,
         )
         logger.info("Coder 模型初始化成功")
 
