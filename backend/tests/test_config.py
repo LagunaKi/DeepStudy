@@ -8,6 +8,7 @@ def test_secure_gemini_defaults() -> None:
     assert settings.LLM_MODEL == "gemini-3-flash-preview"
     assert settings.LLM_CODER_MODEL == "gemini-3-flash-preview"
     assert settings.GEMINI_THINKING_LEVEL == "medium"
+    assert settings.GEMINI_MIN_REQUEST_INTERVAL_SECONDS == 4.0
 
 
 def test_environment_can_override_model(monkeypatch) -> None:

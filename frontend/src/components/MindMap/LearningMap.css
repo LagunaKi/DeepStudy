@@ -1,0 +1,55 @@
+.learning-map-shell {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid #e5ebf3;
+  border-radius: 12px;
+  background:
+    radial-gradient(circle at 20% 10%, rgba(219, 234, 254, 0.7), transparent 36%),
+    #f8fafc;
+}
+
+.learning-map-empty {
+  width: 100%;
+  height: 100%;
+  min-height: 420px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+  text-align: center;
+  color: #64748b;
+}
+
+.learning-map-empty-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  border-radius: 14px;
+  color: #2563eb;
+  background: #dbeafe;
+  font-size: 28px;
+}
+
+.learning-map-empty strong {
+  color: #334155;
+  font-size: 14px;
+}
+
+.learning-map-empty span {
+  max-width: 230px;
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.learning-map-shell .react-flow__controls {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 9px;
+  box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+}

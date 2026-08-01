@@ -29,6 +29,9 @@ DeepStudy 不再定位为普通问答机器人，而是：
 
 ### 主要差距
 
+- 缺少可新建、切换、重命名和删除的持久化会话历史，刷新页面后当前学习上下文丢失。
+- 聊天输入不支持图片和文件附件，已有上传接口也没有接入对话与 Agent 状态。
+- 右侧图谱同时混合对话节点和概念节点，信息层级不清晰，默认视图不符合学习者的思维导图心智模型。
 - 意图路由当前固定返回 `concept`，没有真实路由能力。
 - RAG 仅有独立上传和搜索接口，没有进入聊天主链路。
 - Neo4j 当前主要保存对话树，还不是带来源和领域关系的知识图谱。
@@ -70,7 +73,7 @@ flowchart LR
 
 - 默认模型：Gemini Developer API 免费层的 `gemini-3-flash-preview`。
 - 使用 Google Gen AI SDK，并通过环境变量保留模型切换能力。
-- 阶段 1 将 Agent 主链路迁移到 Responses API。
+- 阶段 1 使用 Gemini 原生 Function Calling 构建工具循环，并通过 Provider 接口隔离模型 SDK。
 - 不再使用原来的 ModelScope/Qwen 默认配置。
 
 ### 4.2 Agent 编排
@@ -222,10 +225,18 @@ MCP 用于向外部 Agent Host 暴露 DeepStudy 的工具和上下文；它不�
 
 核心界面：
 
-1. 左侧：知识库与学习计划。
-2. 中间：对话、回答和引用。
-3. 右侧：知识图谱与学习路径。
-4. 回答详情：Plan、Tool Calls、Sources、Memory Update、Feedback。
+1. 最左侧：会话历史，可新建、切换、重命名和删除学习会话。
+2. 左侧工作区：课程资料、上传状态与学习计划。
+3. 中间：对话、附件、回答和引用。
+4. 右侧：默认学习思维导图；保留知识图谱高级视图用于 GraphRAG 展示。
+5. 回答详情：Plan、Tool Calls、Sources、Memory Update、Feedback。
+
+交互质量要求：
+
+- 会话、消息和附件统一建模，禁止依靠多个平行数组按下标关联。
+- 所有长任务显示明确阶段：上传、解析、检索、思考、工具调用、验证和保存。
+- 错误信息区分网络、额度、文件格式、解析、检索和数据库降级，并提供可执行的重试入口。
+- 桌面端优先，同时保证窄屏下会话栏和学习地图可折叠。
 
 重点是让面试官清楚看到 Agent 做了什么，而不是投入大量时间制作装饰性动画。
 
@@ -242,6 +253,8 @@ MCP 用于向外部 Agent Host 暴露 DeepStudy 的工具和上下文；它不�
 - [x] 增加 Docker Compose 一键启动。
 - [x] 增加 GitHub Actions。
 - [x] 更新 README 和环境配置说明。
+- [x] 为 Gemini 免费层增加全局请求节流、429 冷却倒计时和安全错误提示。
+- [x] 将活动分类和学习地图概念提取改为本地规则，使单轮模型调用由最多 3 次降到 1 次。
 
 验收标准：
 
@@ -253,23 +266,38 @@ MCP 用于向外部 Agent Host 暴露 DeepStudy 的工具和上下文；它不�
 
 ### 阶段 1：Agent 主链路
 
+- [x] 增加 SQLite 会话与消息模型，支持新建、切换、重命名、删除和刷新恢复。
+- [x] 前端改为统一的 `ChatTurn` 状态，不再用用户消息/回答两个平行数组。
 - [ ] 引入 LangGraph `AgentState`。
 - [ ] 实现 Router、Planner、Tool Executor、Verifier。
-- [ ] 使用 Responses API 的 Tool Calling。
+- [ ] 使用 Gemini Function Calling，并建立可替换的模型 Provider 接口。
 - [ ] 通过 SSE 输出 Agent 事件。
 - [ ] 增加 Agent Trace 展示。
+- [x] 建立附件元数据与消息关联，为多模态和 RAG 摄取提供统一入口。
+- [x] 右侧默认切换为层级清晰的学习思维导图。
+- [ ] 增加学习思维导图 / 知识图谱高级视图切换入口。
+
+验收标准：
+
+- 新建多个会话后可切换，刷新页面仍能恢复标题和完整消息。
+- Agent 事件至少展示 Router、Planner、Tool、Verifier 四类可观察状态。
+- 一条聊天消息可以关联零到多个附件，失败时不丢失已输入内容。
+- 学习地图默认呈树状层级，不出现多个独立子图不断向下堆叠的问题。
 
 ### 阶段 2：RAG 与 GraphRAG
 
-- [ ] PDF 解析与结构化切片。
+- [ ] 支持图片、PDF、Markdown、TXT 和常见代码文件上传。
+- [ ] 图片直接进入 Gemini 多模态理解；文档进入解析、切片和索引任务。
+- [ ] PDF 解析与结构化切片，并展示文件级解析进度和失败原因。
 - [ ] 混合检索与 rerank。
 - [ ] 回答引用。
 - [ ] 领域知识图谱 Schema。
+- [ ] 学习思维导图与领域知识图谱双视图切换。
 - [ ] 建立 30～50 条检索评测集。
 
 ### 阶段 3：Memory、Skills 与 MCP
 
-- [ ] 会话 Checkpoint。
+- [ ] LangGraph 会话 Checkpoint 与中断恢复。
 - [ ] 跨会话长期记忆。
 - [ ] Memory 查看和删除能力。
 - [ ] 四个 Agent Skills。

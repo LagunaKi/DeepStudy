@@ -2,12 +2,12 @@
 SQLite 数据库操作
 管理用户数据和对话记录
 """
-import aiosqlite
-import json
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import Optional, Dict, List
+
+import aiosqlite
+
 from backend.config import settings
 
 
@@ -95,6 +95,56 @@ async def init_db():
         )
     """)
 
+    # 可持久化学习会话。Agent checkpoint 将在阶段 1 后续复用 session_id。
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+            content TEXT NOT NULL,
+            conversation_id TEXT,
+            parent_id TEXT,
+            status TEXT NOT NULL DEFAULT 'complete',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+        )
+    """)
+
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_updated
+        ON chat_sessions(user_id, updated_at DESC)
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_chat_messages_session_created
+        ON chat_messages(session_id, created_at ASC)
+    """)
+
+    # 附件元数据先进入统一模型；阶段 2 接入文件存储、解析和多模态内容。
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS message_attachments (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            message_id TEXT,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE SET NULL
+        )
+    """)
+
     await db.commit()
     await db.close()
 
@@ -129,7 +179,7 @@ async def create_user(
 async def get_user_by_username(
     db: aiosqlite.Connection,
     username: str
-) -> Optional[Dict]:
+) -> dict | None:
     """
     根据用户名获取用户
     
@@ -153,7 +203,7 @@ async def get_user_by_username(
 async def get_user_by_email(
     db: aiosqlite.Connection,
     email: str
-) -> Optional[Dict]:
+) -> dict | None:
     """
     根据邮箱获取用户
     
@@ -172,5 +222,4 @@ async def get_user_by_email(
     if row:
         return dict(row)
     return None
-
 

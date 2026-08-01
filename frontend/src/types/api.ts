@@ -40,6 +40,28 @@ export interface ChatRequest {
   session_id: string // 会话 ID，区分不同学习主题
 }
 
+export interface ChatSessionMessage {
+  id: string
+  role: 'user' | 'assistant'
+  content: string
+  conversation_id?: string | null
+  parent_id?: string | null
+  status: 'complete' | 'error' | string
+  created_at: string
+}
+
+export interface ChatSessionSummary {
+  id: string
+  title: string
+  created_at: string
+  updated_at: string
+  message_count: number
+}
+
+export interface ChatSessionDetail extends ChatSessionSummary {
+  messages: ChatSessionMessage[]
+}
+
 /**
  * 片段模型：用于划词引用的核心单元
  */

@@ -1,9 +1,65 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import axios from 'axios'
-import { chatAPI, mindMapAPI, profileAPI } from '../../services/api'
-import { AgentResponse, MindMapGraph, MindMapNode, MindMapEdge, ConceptProfileSummary } from '../../types/api'
+import {
+  ChatStreamEvent,
+  chatAPI,
+  mindMapAPI,
+  profileAPI,
+  sessionAPI,
+} from '../../services/api'
+import {
+  AgentResponse,
+  ChatSessionDetail,
+  ChatSessionSummary,
+  ConceptProfileSummary,
+  MindMapEdge,
+  MindMapGraph,
+  MindMapNode,
+} from '../../types/api'
 import TextFragment from '../Markdown/TextFragment'
 import KnowledgeGraph from '../MindMap/KnowledgeGraph'
+import ConversationSidebar from './ConversationSidebar'
+
+interface ChatTurn {
+  id: string
+  user: string
+  assistant: AgentResponse
+  status: 'loading' | 'complete' | 'error'
+}
+
+const emptyAssistant = (parentId: string | null = null): AgentResponse => ({
+  answer: '',
+  fragments: [],
+  knowledge_triples: [],
+  suggestion: undefined,
+  conversation_id: '',
+  parent_id: parentId,
+})
+
+const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
+  const turns: ChatTurn[] = []
+  detail.messages.forEach((message) => {
+    if (message.role === 'user') {
+      turns.push({
+        id: message.id,
+        user: message.content,
+        assistant: emptyAssistant(message.parent_id || null),
+        status: 'complete',
+      })
+      return
+    }
+
+    const target = turns[turns.length - 1]
+    if (!target) return
+    target.assistant = {
+      ...emptyAssistant(message.parent_id || null),
+      answer: message.status === 'error' ? '' : message.content,
+      conversation_id: message.conversation_id || '',
+    }
+    target.status = message.status === 'error' ? 'error' : 'complete'
+  })
+  return turns
+}
 
 const ChatInterface = () => {
   // --- 基础 Refs ---
@@ -13,17 +69,20 @@ const ChatInterface = () => {
   const containerRef = useRef<HTMLDivElement>(null)
   
   // --- 基础 State ---
-  const [messages, setMessages] = useState<AgentResponse[]>([])
-  const [userMessages, setUserMessages] = useState<string[]>([])
+  const [turns, setTurns] = useState<ChatTurn[]>([])
   const [input, setInput] = useState<string>('')
   const [loading, setLoading] = useState<boolean>(false)
   const [hasFirstChunk, setHasFirstChunk] = useState<boolean>(false)
   const [error, setError] = useState<string>('')
+  const [cooldownSeconds, setCooldownSeconds] = useState(0)
+  const [quotaExhausted, setQuotaExhausted] = useState(false)
   
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
   const [sidebarWidth, setSidebarWidth] = useState<number>(400)
   const [isResizing, setIsResizing] = useState<boolean>(false)
-  const [sessionId] = useState<string>(() => `session_${Date.now()}`)
+  const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [sessionsLoading, setSessionsLoading] = useState(true)
   
   const [questionModalOpen, setQuestionModalOpen] = useState(false)
   const [selectedFragmentId, setSelectedFragmentId] = useState<string>('')
@@ -147,6 +206,129 @@ const ChatInterface = () => {
 
   // ==========================================
 
+  const refreshSessions = useCallback(async () => {
+    const nextSessions = await sessionAPI.list()
+    setSessions(nextSessions)
+    return nextSessions
+  }, [])
+
+  const handleSelectSession = useCallback(async (sessionId: string) => {
+    if (loading || sessionId === activeSessionId) return
+    setSessionsLoading(true)
+    setError('')
+    try {
+      const detail = await sessionAPI.get(sessionId)
+      const loadedTurns = detailToTurns(detail)
+      setActiveSessionId(sessionId)
+      setTurns(loadedTurns)
+      setMindMapData({ nodes: [], edges: [] })
+      const latestConversationId = [...loadedTurns]
+        .reverse()
+        .find((turn) => turn.assistant.conversation_id)?.assistant.conversation_id
+      setCurrentPollingId(latestConversationId || null)
+    } catch (sessionError) {
+      console.error('加载会话失败:', sessionError)
+      setError('历史会话加载失败，请重试')
+    } finally {
+      setSessionsLoading(false)
+    }
+  }, [activeSessionId, loading])
+
+  const handleCreateSession = useCallback(async () => {
+    if (loading) return
+    setSessionsLoading(true)
+    setError('')
+    try {
+      const created = await sessionAPI.create()
+      setSessions((previous) => [created, ...previous])
+      setActiveSessionId(created.id)
+      setTurns([])
+      setMindMapData({ nodes: [], edges: [] })
+      setCurrentPollingId(null)
+      requestAnimationFrame(() => inputRef.current?.focus())
+    } catch (sessionError) {
+      console.error('新建会话失败:', sessionError)
+      setError('新建会话失败，请确认后端已启动')
+    } finally {
+      setSessionsLoading(false)
+    }
+  }, [loading])
+
+  const handleRenameSession = useCallback(async (session: ChatSessionSummary) => {
+    const title = window.prompt('输入新的会话标题', session.title)?.trim()
+    if (!title || title === session.title) return
+    try {
+      await sessionAPI.rename(session.id, title)
+      setSessions((previous) => previous.map((item) => (
+        item.id === session.id ? { ...item, title } : item
+      )))
+    } catch (sessionError) {
+      console.error('重命名会话失败:', sessionError)
+      setError('重命名会话失败，请重试')
+    }
+  }, [])
+
+  const handleDeleteSession = useCallback(async (session: ChatSessionSummary) => {
+    if (!window.confirm(`删除会话“${session.title}”？此操作会删除该会话的本地消息历史。`)) {
+      return
+    }
+    try {
+      await sessionAPI.remove(session.id)
+      const remaining = sessions.filter((item) => item.id !== session.id)
+      setSessions(remaining)
+      if (activeSessionId !== session.id) return
+
+      if (remaining.length > 0) {
+        setActiveSessionId(null)
+        await handleSelectSession(remaining[0].id)
+      } else {
+        setActiveSessionId(null)
+        setTurns([])
+        const created = await sessionAPI.create()
+        setSessions([created])
+        setActiveSessionId(created.id)
+      }
+    } catch (sessionError) {
+      console.error('删除会话失败:', sessionError)
+      setError('删除会话失败，请重试')
+    }
+  }, [activeSessionId, handleSelectSession, sessions])
+
+  useEffect(() => {
+    let mounted = true
+    const bootstrapSessions = async () => {
+      setSessionsLoading(true)
+      try {
+        let existing = await sessionAPI.list()
+        if (!mounted) return
+        if (existing.length === 0) {
+          const created = await sessionAPI.create()
+          existing = [created]
+        }
+        if (!mounted) return
+        setSessions(existing)
+        const detail = await sessionAPI.get(existing[0].id)
+        if (!mounted) return
+        const loadedTurns = detailToTurns(detail)
+        setActiveSessionId(existing[0].id)
+        setTurns(loadedTurns)
+        const latestConversationId = [...loadedTurns]
+          .reverse()
+          .find((turn) => turn.assistant.conversation_id)?.assistant.conversation_id
+        setCurrentPollingId(latestConversationId || null)
+      } catch (sessionError) {
+        console.error('初始化会话失败:', sessionError)
+        if (mounted) setError('无法加载会话历史，请确认后端已启动')
+      } finally {
+        if (mounted) setSessionsLoading(false)
+      }
+    }
+    bootstrapSessions()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
   const scrollToBottom = (behavior: 'auto' | 'smooth' = 'smooth') => {
     if (scrollContainerRef.current) {
         const { scrollHeight, clientHeight } = scrollContainerRef.current
@@ -161,7 +343,7 @@ const ChatInterface = () => {
     if (!loading || (loading && !hasFirstChunk)) {
         scrollToBottom('smooth')
     }
-  }, [messages.length, loading, hasFirstChunk])
+  }, [turns.length, loading, hasFirstChunk])
 
   useEffect(() => {
     if (loading && hasFirstChunk) {
@@ -175,33 +357,51 @@ const ChatInterface = () => {
             }
         }
     }
-  }, [messages, loading, hasFirstChunk])
+  }, [turns, loading, hasFirstChunk])
 
   const handleSend = async (refFragmentId?: string, selectedText?: string, queryOverride?: string) => {
     const query = (queryOverride || input).trim()
     if (!query || loading) return
+    if (cooldownSeconds > 0 || quotaExhausted) return
+
+    let sessionId = activeSessionId
+    if (!sessionId) {
+      try {
+        const created = await sessionAPI.create()
+        sessionId = created.id
+        setSessions((previous) => [created, ...previous])
+        setActiveSessionId(created.id)
+      } catch (sessionError) {
+        console.error('创建会话失败:', sessionError)
+        setError('无法创建会话，请确认后端已启动')
+        return
+      }
+    }
 
     if (!queryOverride) setInput('')
     setError('')
     setLoading(true)
     setHasFirstChunk(false)
 
-    setUserMessages(prev => [...prev, query])
-
-    const parentId = messages.length > 0 ? messages[messages.length - 1].conversation_id : null
-    const aiIndex = messages.length
-    
-    setMessages(prev => [
-      ...prev,
+    const parentId = [...turns]
+      .reverse()
+      .find((turn) => turn.assistant.conversation_id)?.assistant.conversation_id || null
+    const turnId = crypto.randomUUID()
+    setTurns((previous) => [
+      ...previous,
       {
-        answer: '',
-        fragments: [],
-        knowledge_triples: [],
-        suggestion: undefined,
-        conversation_id: '',
-        parent_id: parentId,
+        id: turnId,
+        user: query,
+        assistant: emptyAssistant(parentId),
+        status: 'loading',
       },
     ])
+
+    const updateTurn = (updater: (turn: ChatTurn) => ChatTurn) => {
+      setTurns((previous) => previous.map((turn) => (
+        turn.id === turnId ? updater(turn) : turn
+      )))
+    }
 
     try {
       await chatAPI.sendMessageStream(
@@ -212,7 +412,7 @@ const ChatInterface = () => {
           selected_text: selectedText || null,
           session_id: sessionId,
         },
-        (payload: { type: string; text?: string; conversation_id?: string; parent_id?: string; answer?: string }) => {
+        (payload: ChatStreamEvent) => {
           
           if (payload.conversation_id) {
             // ⭐ 核心逻辑：只要有了新 ID，就立刻把它设为当前轮询目标
@@ -223,49 +423,58 @@ const ChatInterface = () => {
           }
 
           if (payload.type === 'meta' && payload.conversation_id) {
-            setMessages(prev => {
-              const next = [...prev]
-              if (next[aiIndex]) {
-                next[aiIndex] = { ...next[aiIndex], conversation_id: payload.conversation_id as string }
-              }
-              return next
-            })
+            updateTurn((turn) => ({
+              ...turn,
+              assistant: {
+                ...turn.assistant,
+                conversation_id: payload.conversation_id as string,
+              },
+            }))
           } else if (payload.type === 'delta' && payload.text) {
             setHasFirstChunk(true)
-            setMessages(prev => {
-              const next = [...prev]
-              if (next[aiIndex]) {
-                next[aiIndex] = { ...next[aiIndex], answer: (next[aiIndex].answer || '') + payload.text }
-              }
-              return next
-            })
+            updateTurn((turn) => ({
+              ...turn,
+              assistant: {
+                ...turn.assistant,
+                answer: `${turn.assistant.answer || ''}${payload.text}`,
+              },
+            }))
           } else if (payload.type === 'full' && payload.answer) {
-            setMessages(prev => {
-              const next = [...prev]
-              next[aiIndex] = {
+            updateTurn((turn) => ({
+              ...turn,
+              assistant: {
+                ...emptyAssistant(payload.parent_id || null),
                 answer: payload.answer as string,
-                fragments: [],
-                knowledge_triples: [],
-                suggestion: undefined,
-                conversation_id: payload.conversation_id as string,
-                parent_id: payload.parent_id as string | null | undefined,
-              }
-              return next
-            })
+                conversation_id: payload.conversation_id || turn.assistant.conversation_id,
+              },
+            }))
+          } else if (payload.type === 'error') {
+            updateTurn((turn) => ({ ...turn, status: 'error' }))
+            if (payload.code === 'quota_exhausted') {
+              setQuotaExhausted(true)
+              setCooldownSeconds(0)
+              setError('')
+            } else if (payload.code === 'rate_limit') {
+              setCooldownSeconds(Math.max(1, Math.ceil(payload.retry_after || 60)))
+              setError('')
+            } else {
+              setError(payload.message || '模型生成失败，请重试')
+            }
           }
         }
       )
-
+      updateTurn((turn) => ({ ...turn, status: turn.status === 'error' ? 'error' : 'complete' }))
     } catch (error: unknown) {
       console.error('发送消息失败:', error)
-      setUserMessages(prev => prev.slice(0, -1))
+      updateTurn((turn) => ({ ...turn, status: 'error' }))
       if (axios.isAxiosError(error) && error.response?.status === 404) {
         setError('聊天功能暂时不可用，请稍后再试')
       } else {
-        setError('发送消息失败，请稍后再试')
+        setError(error instanceof Error ? error.message : '发送消息失败，请稍后再试')
       }
     } finally {
       setLoading(false)
+      refreshSessions().catch(() => {})
     }
   }
 
@@ -297,8 +506,17 @@ const ChatInterface = () => {
     profileAPI.getPlan().then(setPlanList).catch(() => {})
   }, [])
 
+  useEffect(() => {
+    if (cooldownSeconds <= 0) return
+    const timer = window.setTimeout(() => {
+      setCooldownSeconds((seconds) => Math.max(0, seconds - 1))
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [cooldownSeconds])
+
   const handleQuestionSubmit = async () => {
     if (!questionInput.trim()) return
+    if (cooldownSeconds > 0 || quotaExhausted) return
     setQuestionModalOpen(false)
     handleSend(selectedFragmentId, selectedText, questionInput.trim())
   }
@@ -376,7 +594,7 @@ const ChatInterface = () => {
     zIndex: -1,
   }
   const mainAreaStyle: React.CSSProperties = {
-    flex: sidebarOpen ? `0 0 calc(100% - ${sidebarWidth + 48}px)` : '1',
+    flex: 1,
     display: 'flex',
     flexDirection: 'column',
     backgroundColor: 'rgba(255, 255, 255, 0.8)',
@@ -465,8 +683,8 @@ const ChatInterface = () => {
     borderRadius: '8px',
     fontSize: '16px',
     fontWeight: 500,
-    cursor: loading || !input.trim() ? 'not-allowed' : 'pointer',
-    opacity: loading || !input.trim() ? 0.6 : 1,
+    cursor: loading || cooldownSeconds > 0 || quotaExhausted || !input.trim() ? 'not-allowed' : 'pointer',
+    opacity: loading || cooldownSeconds > 0 || quotaExhausted || !input.trim() ? 0.6 : 1,
     transition: 'background-color 0.2s',
   }
   const sidebarStyle: React.CSSProperties = {
@@ -507,15 +725,26 @@ const ChatInterface = () => {
   return (
     <div style={containerStyle} ref={containerRef}>
       <div style={backgroundStyle} />
+      <ConversationSidebar
+        sessions={sessions}
+        activeSessionId={activeSessionId}
+        loading={sessionsLoading || loading}
+        onCreate={handleCreateSession}
+        onSelect={handleSelectSession}
+        onRename={handleRenameSession}
+        onDelete={handleDeleteSession}
+      />
       <div style={mainAreaStyle}>
         <div style={headerStyle}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <h1 style={{ fontSize: '20px', fontWeight: 600, color: '#111827', margin: 0 }}>
-              DeepStudy
-            </h1>
-            <span style={{ fontSize: '14px', color: '#6B7280' }}>
-              递归学习助手
-            </span>
+            <div>
+              <h1 style={{ fontSize: '17px', fontWeight: 650, color: '#111827', margin: 0 }}>
+                {sessions.find((session) => session.id === activeSessionId)?.title || '新对话'}
+              </h1>
+              <span style={{ fontSize: '11px', color: '#6B7280' }}>
+                递归学习 · 会话内容自动保存
+              </span>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <button
@@ -548,13 +777,13 @@ const ChatInterface = () => {
               onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#F3F4F6'}
               onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'white'}
             >
-              {sidebarOpen ? '隐藏图谱' : '显示图谱'}
+              {sidebarOpen ? '隐藏学习地图' : '显示学习地图'}
             </button>
           </div>
         </div>
 
         <div style={messagesAreaStyle} ref={scrollContainerRef}>
-          {messages.length === 0 && (
+          {turns.length === 0 && (
             <div style={{ textAlign: 'center', color: '#6B7280', marginTop: '100px' }}>
               <h2 style={{ fontSize: '24px', marginBottom: '8px', color: '#111827' }}>
                 开始你的学习之旅
@@ -562,24 +791,22 @@ const ChatInterface = () => {
               <p>输入你的问题，AI 助手会帮助你深入理解</p>
             </div>
           )}
-          {messages.map((msg, index) => (
-            <div key={index}>
-              {userMessages[index] && (
-                <div style={userMessageStyle}>
-                  <div style={userBubbleStyle}>
-                    {userMessages[index]}
-                  </div>
+          {turns.map((turn, index) => (
+            <div key={turn.id}>
+              <div style={userMessageStyle}>
+                <div style={userBubbleStyle}>
+                  {turn.user}
                 </div>
-              )}
+              </div>
               <div style={aiMessageStyle}>
                 <div style={aiCardStyle}>
-                  {msg.answer ? (
+                  {turn.assistant.answer ? (
                       <TextFragment
-                        content={msg.answer}
-                        fragments={msg.fragments || []}
+                        content={turn.assistant.answer}
+                        fragments={turn.assistant.fragments || []}
                         onFragmentSelect={handleFragmentSelect}
                       />
-                    ) : loading && !hasFirstChunk && index === messages.length - 1 ? (
+                    ) : turn.status === 'loading' && loading && !hasFirstChunk && index === turns.length - 1 ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#6B7280' }}>
                           <div style={{
                             width: '16px',
@@ -591,11 +818,59 @@ const ChatInterface = () => {
                           }} />
                           <span>思考中...</span>
                         </div>
+                    ) : turn.status === 'error' ? (
+                      <div style={{ color: '#B91C1C', fontSize: '14px' }}>
+                        本轮回答失败。
+                        <button
+                          onClick={() => handleSend(undefined, undefined, turn.user)}
+                          disabled={cooldownSeconds > 0 || quotaExhausted}
+                          style={{
+                            marginLeft: '8px',
+                            border: 0,
+                            color: cooldownSeconds > 0 || quotaExhausted ? '#9CA3AF' : '#2563EB',
+                            background: 'none',
+                            cursor: cooldownSeconds > 0 || quotaExhausted ? 'not-allowed' : 'pointer',
+                          }}
+                        >
+                          {quotaExhausted
+                            ? '今日额度已用完'
+                            : cooldownSeconds > 0
+                              ? `${cooldownSeconds} 秒后重试`
+                              : '重试'}
+                        </button>
+                      </div>
                     ) : null}
                 </div>
               </div>
             </div>
           ))}
+          {quotaExhausted && (
+            <div
+              style={{
+                ...errorStyle,
+                backgroundColor: '#FFF7ED',
+                color: '#C2410C',
+                border: '1px solid #FED7AA',
+              }}
+              role="alert"
+            >
+              Gemini 3 Flash 今日免费请求额度已用完。代码无法绕过服务商的每日上限，
+              请等待 Google 配额重置后刷新页面再试。
+            </div>
+          )}
+          {cooldownSeconds > 0 && (
+            <div
+              style={{
+                ...errorStyle,
+                backgroundColor: '#FFF7ED',
+                color: '#C2410C',
+                border: '1px solid #FED7AA',
+              }}
+              role="alert"
+            >
+              Gemini 免费额度正在冷却，请等待 {cooldownSeconds} 秒后重试。系统不会在此期间继续消耗请求。
+            </div>
+          )}
           {error && <div style={errorStyle} role="alert">{error}</div>}
           <div ref={messagesEndRef} />
         </div>
@@ -627,10 +902,10 @@ const ChatInterface = () => {
           />
           <button
             onClick={() => handleSend()}
-            disabled={loading || !input.trim()}
+            disabled={loading || cooldownSeconds > 0 || quotaExhausted || !input.trim()}
             style={buttonStyle}
             onMouseEnter={(e) => {
-              if (!loading && input.trim()) {
+              if (!loading && cooldownSeconds === 0 && !quotaExhausted && input.trim()) {
                 e.currentTarget.style.backgroundColor = '#1D4ED8'
               }
             }}
@@ -638,7 +913,13 @@ const ChatInterface = () => {
               e.currentTarget.style.backgroundColor = '#2563EB'
             }}
           >
-            {loading ? '发送中...' : '发送'}
+            {loading
+              ? '发送中...'
+              : quotaExhausted
+                ? '今日额度已用完'
+                : cooldownSeconds > 0
+                  ? `${cooldownSeconds}s`
+                  : '发送'}
           </button>
         </div>
       </div>
@@ -663,7 +944,7 @@ const ChatInterface = () => {
             alignItems: 'center',
           }}>
             <h3 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#111827' }}>
-              知识图谱
+              学习思维导图
             </h3>
             <button
               onClick={() => setSidebarOpen(false)}

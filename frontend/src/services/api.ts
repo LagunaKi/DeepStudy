@@ -9,9 +9,22 @@ import {
   MindMapGraph,
   DialogueNodeBase,
   ConceptProfileSummary,
+  ChatSessionDetail,
+  ChatSessionSummary,
 } from '../types/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
+
+export interface ChatStreamEvent {
+  type: string
+  text?: string
+  message?: string
+  code?: 'rate_limit' | 'quota_exhausted' | 'model_error' | string
+  retry_after?: number
+  conversation_id?: string
+  parent_id?: string
+  answer?: string
+}
 
 /**
  * 创建 axios 实例
@@ -41,7 +54,7 @@ export const chatAPI = {
    */
   sendMessageStream: async (
     data: ChatRequest,
-    onChunk: (payload: { type: string; text?: string; conversation_id?: string; parent_id?: string }) => void
+    onChunk: (payload: ChatStreamEvent) => void
   ): Promise<void> => {
     const response = await fetch(`${API_BASE_URL}/chat`, {
       method: 'POST',
@@ -104,6 +117,31 @@ export const chatAPI = {
       `/chat/conversation/${conversationId}`
     )
     return response.data
+  },
+}
+
+export const sessionAPI = {
+  list: async (): Promise<ChatSessionSummary[]> => {
+    const response = await apiClient.get<ChatSessionSummary[]>('/sessions')
+    return response.data
+  },
+
+  create: async (title = '新对话'): Promise<ChatSessionSummary> => {
+    const response = await apiClient.post<ChatSessionSummary>('/sessions', { title })
+    return response.data
+  },
+
+  get: async (sessionId: string): Promise<ChatSessionDetail> => {
+    const response = await apiClient.get<ChatSessionDetail>(`/sessions/${sessionId}`)
+    return response.data
+  },
+
+  rename: async (sessionId: string, title: string): Promise<void> => {
+    await apiClient.patch(`/sessions/${sessionId}`, { title })
+  },
+
+  remove: async (sessionId: string): Promise<void> => {
+    await apiClient.delete(`/sessions/${sessionId}`)
   },
 }
 

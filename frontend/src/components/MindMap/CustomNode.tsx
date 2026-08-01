@@ -2,35 +2,40 @@ import { memo, useState, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { Handle, Position, NodeProps } from 'reactflow';
 
-// 🎨 复刻 Nano Banana 的配色方案
 const styles = {
-  // 胶囊外壳
   wrapper: {
-    padding: '10px 24px',
-    borderRadius: '999px', // 完美的圆角胶囊
-    borderWidth: '2px',
+    padding: '11px 14px',
+    borderRadius: '12px',
+    borderWidth: '1px',
     borderStyle: 'solid',
-    fontSize: '14px',
-    fontWeight: 600,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.08)', // 柔和的阴影
+    fontSize: '12px',
+    fontWeight: 650,
+    lineHeight: 1.35,
+    boxShadow: '0 5px 16px rgba(15, 23, 42, 0.08)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    minWidth: '120px',
+    width: '184px',
+    minHeight: '50px',
     textAlign: 'center' as const,
-    transition: 'all 0.3s ease',
+    transition: 'transform 0.18s ease, box-shadow 0.18s ease',
   },
   // 变体配色
   variants: {
     root: {
-      backgroundColor: '#EFF6FF',
+      background: 'linear-gradient(135deg, #1D4ED8, #4F46E5)',
       borderColor: '#3B82F6',
-      color: '#1E40AF',
+      color: '#FFFFFF',
     },
     explanation: {
-      backgroundColor: '#FFF7ED',
-      borderColor: '#F97316',
-      color: '#9A3412',
+      backgroundColor: '#FFFFFF',
+      borderColor: '#D8E1EC',
+      color: '#334155',
+    },
+    concept: {
+      backgroundColor: '#FFFFFF',
+      borderColor: '#BFDBFE',
+      color: '#1E3A5F',
     },
     default: {
       backgroundColor: 'white',
@@ -39,7 +44,7 @@ const styles = {
     },
     // 学习计划内概念：淡绿色卡片
     plan: {
-      backgroundColor: '#DCFCE7', // 淡绿
+      backgroundColor: '#ECFDF5',
       borderColor: '#22C55E',
       color: '#166534',
     },
@@ -91,7 +96,7 @@ const CustomNode = ({ data, isConnectable }: NodeProps<CustomNodeData>) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   const inPlan = data.inPlan === true;
-  const variant = inPlan ? 'plan' : (data.variant || (data.type === 'root' ? 'root' : 'explanation'));
+  const variant = inPlan ? 'plan' : (data.variant || (data.type === 'root' ? 'root' : 'concept'));
   const currentStyle = {
     ...styles.wrapper,
     ...styles.variants[variant as keyof typeof styles.variants],

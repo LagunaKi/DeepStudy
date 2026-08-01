@@ -22,12 +22,13 @@ backend/
 │   │   └── knowledge.py   # 知识相关（若有）
 │   └── schemas/           # 请求/响应模型
 ├── agent/
-│   ├── orchestrator.py    # 流式编排、首轮/递归后处理、概念提炼
+│   ├── orchestrator.py    # 流式编排、首轮/递归后处理
+│   ├── concept_extractor.py   # 不额外调用 LLM 的学习地图概念提取
 │   ├── intent_router.py   # 意图识别（concept/code/derivation）
 │   ├── activity_classifier.py  # 学习活动分类（explain/derive/...）
 │   ├── llm_client.py      # Gemini 异步与流式调用
 │   ├── prompts/
-│   │   └── system_prompts.py   # 所有 Prompt 模板（首轮/递归回答与概念提炼）
+│   │   └── system_prompts.py   # 首轮/递归回答与各策略 Prompt
 │   ├── strategies/        # ConceptStrategy、CodeStrategy、DerivationStrategy
 │   └── extractors/        # knowledge_extractor（规则三元组，首轮仍用）
 ├── data/
@@ -59,8 +60,8 @@ API 文档：http://localhost:8000/docs
 
 ## 核心流程
 
-- **首轮提问**：意图识别 → 策略生成回答 → 流式返回；后处理：LLM 概念提炼（root + children）→ 更新画像与 `conversation_concepts` → 写入 Neo4j。
-- **划词追问**：带 `parent_id` 的流式对话；后处理：Neo4j 取祖先 node_id → 从 `conversation_concepts` 取祖先概念 → LLM 概念提炼（鼓励用已有概念、可返回 alias_suggestions）→ 更新画像与 `conversation_concepts` → 若有 alias 建议则追加 `profile_aliases.json` 并重载归一化。
+- **首轮提问**：意图识别 → 策略生成回答 → 流式返回；后处理：本地提取 root + children 与学习活动 → 更新画像与 `conversation_concepts` → 写入 Neo4j。
+- **划词追问**：带 `parent_id` 的流式对话；后处理同样使用本地规则更新学习地图和画像，不额外消耗 Gemini 免费请求。
 
 ## API 概览
 
@@ -127,7 +128,7 @@ API 文档：http://localhost:8000/docs
 
 - **Neo4j 连接失败**：检查容器、端口、密码与 `NEO4J_AUTH`。
 - **Gemini 401/403**：确认 `GEMINI_API_KEY` 来自 Google AI Studio。
-- **Gemini 429**：免费层额度已用完，请等待额度窗口重置。
+- **Gemini 429**：所有模型调用共用请求节流器；临时限流按服务端 `retryDelay` 冷却；每日额度耗尽单独提示，不再错误显示短倒计时。免费层默认每 4 秒最多启动一次请求。
 - **导入错误**：在项目根目录运行 uvicorn，保证 `backend` 包可被解析。
 
 更多实现细节见 [IMPLEMENTATION_STATUS.md](IMPLEMENTATION_STATUS.md)（若存在）。

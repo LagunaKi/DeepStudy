@@ -2,34 +2,31 @@
 Agent 编排器
 使用自定义 LLM 客户端编排对话流程
 """
-import uuid
-import logging
 import json
-from typing import AsyncGenerator, Optional
+import logging
+import uuid
+from collections.abc import AsyncGenerator
 from datetime import datetime
 
-from backend.agent.llm_client import GeminiLLMClient
-from backend.agent.intent_router import IntentRouter, IntentType
-from backend.agent.strategies import DerivationStrategy, CodeStrategy, ConceptStrategy
+from backend.agent.activity_classifier import classify_activity
+from backend.agent.concept_extractor import extract_concept_structure
 from backend.agent.extractors import knowledge_extractor
+from backend.agent.intent_router import IntentRouter, IntentType
+from backend.agent.llm_client import GeminiLLMClient, LLMRateLimitError
 from backend.agent.prompts.system_prompts import (
-    CONCEPT_EXTRACTION_FIRST_TURN,
-    CONCEPT_EXTRACTION_RECURSIVE,
     RECURSIVE_ANSWER_QUERY_ONLY,
     RECURSIVE_ANSWER_WITH_CONTEXT,
     RECURSIVE_ANSWER_WITH_SELECTION,
     RECURSIVE_PROMPT,
 )
+from backend.agent.strategies import CodeStrategy, ConceptStrategy, DerivationStrategy
 from backend.api.schemas.response import AgentResponse
+from backend.config import settings
 from backend.data.neo4j_client import neo4j_client
-from backend.agent.activity_classifier import classify_activity
 from backend.data.profile_store import (
     ActivityVector,
-    append_aliases_and_reload,
     apply_learning_event_to_concepts,
-    get_concepts_by_conversation_ids,
 )
-from backend.config import settings
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -50,6 +47,7 @@ class AgentOrchestrator:
             model_name=settings.LLM_MODEL,
             api_key=settings.GEMINI_API_KEY,
             thinking_level=settings.GEMINI_THINKING_LEVEL,
+            min_request_interval_seconds=settings.GEMINI_MIN_REQUEST_INTERVAL_SECONDS,
         )
         logger.info("主模型初始化成功")
 
@@ -58,6 +56,7 @@ class AgentOrchestrator:
             model_name=settings.LLM_CODER_MODEL,
             api_key=settings.GEMINI_API_KEY,
             thinking_level=settings.GEMINI_THINKING_LEVEL,
+            min_request_interval_seconds=settings.GEMINI_MIN_REQUEST_INTERVAL_SECONDS,
         )
         logger.info("Coder 模型初始化成功")
 
@@ -78,8 +77,8 @@ class AgentOrchestrator:
         self,
         user_id: str,
         query: str,
-        parent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        parent_id: str | None = None,
+        session_id: str | None = None,
     ) -> AgentResponse:
         """
         处理用户查询（非流式路径，保留以兼容旧逻辑）
@@ -168,8 +167,8 @@ class AgentOrchestrator:
         self,
         user_id: str,
         query: str,
-        parent_id: Optional[str] = None,
-        session_id: Optional[str] = None,
+        parent_id: str | None = None,
+        session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         处理用户查询（流式输出 + 知识提炼）
@@ -214,7 +213,14 @@ class AgentOrchestrator:
         answer_parts: list[str] = []
 
         # 首包：meta 信息
-        yield json.dumps({"type": "meta", "conversation_id": conversation_id, "parent_id": parent_id}, ensure_ascii=False) + "\n"
+        yield json.dumps(
+            {
+                "type": "meta",
+                "conversation_id": conversation_id,
+                "parent_id": parent_id,
+            },
+            ensure_ascii=False,
+        ) + "\n"
 
         try:
             # 2. 流式生成回答
@@ -223,9 +229,27 @@ class AgentOrchestrator:
                     continue
                 answer_parts.append(delta)
                 yield json.dumps({"type": "delta", "text": delta}, ensure_ascii=False) + "\n"
+        except LLMRateLimitError as e:
+            logger.warning("[stream] Gemini 免费层限流: retry_after=%s", e.retry_after)
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": e.code,
+                    "message": str(e),
+                    "retry_after": e.retry_after,
+                },
+                ensure_ascii=False,
+            ) + "\n"
         except Exception as e:
             logger.error("[stream] LLM 流式生成失败: %s", str(e), exc_info=True)
-            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": "model_error",
+                    "message": "模型服务暂时不可用，请稍后重试。",
+                },
+                ensure_ascii=False,
+            ) + "\n"
         finally:
             # 结束标记
             yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
@@ -256,10 +280,10 @@ class AgentOrchestrator:
         query: str,
         full_answer: str,
         intent: IntentType,
-        parent_id: Optional[str] = None,
+        parent_id: str | None = None,
     ):
         """
-        流式回答的后处理：知识三元组提取 + 概念提炼 + 学习画像更新 + Neo4j 保存
+        流式回答的后处理：本地概念提取 + 学习画像更新 + Neo4j 保存
         """
         logger.info("[stream] 开始后处理：知识提取、画像更新和图谱构建...")
         
@@ -273,21 +297,14 @@ class AgentOrchestrator:
                 logger.warning(f"[stream] 知识三元组提取失败: {str(e)}", exc_info=True)
                 knowledge_triples = []
 
-            # B. 概念提炼 + 学习画像更新
+            # B. 本地概念提取 + 学习画像更新
             learning_delta = ActivityVector(0.0, 0.0, 0.0)
             try:
-                extraction_prompt = CONCEPT_EXTRACTION_FIRST_TURN.format(
-                    query=query, full_answer=full_answer
-                )
-                summary_res = await self.llm.acomplete(extraction_prompt)
-                summary_text = summary_res.text if hasattr(summary_res, "text") else str(summary_res)
-                summary_text = summary_text.replace("```json", "").replace("```", "").strip()
-                
-                structure = json.loads(summary_text)
+                structure = extract_concept_structure(query, full_answer)
                 root_label = structure.get("root", "核心概念")
                 children = structure.get("children", []) or []
                 
-                logger.info("[stream] 概念提炼成功: Root=%s, Children=%s", root_label, children)
+                logger.info("[stream] 本地概念提取成功: Root=%s, Children=%s", root_label, children)
 
                 # 将本轮涉及的概念应用为一次学习事件（活动类型由分类器判别，失败兜底 explain）
                 raw_concepts = [root_label] + list(children)
@@ -304,7 +321,7 @@ class AgentOrchestrator:
                 )
                 node_mastery_score = (learning_delta.u + learning_delta.r + learning_delta.a) / 3.0
 
-                # 使用概念提炼的结果保存到 Neo4j
+                # 使用概念提取结果保存到 Neo4j
                 user_node_id = f"{conversation_id}_root"
                 await neo4j_client.save_dialogue_node(
                     node_id=user_node_id,
@@ -358,8 +375,12 @@ class AgentOrchestrator:
                 logger.info("[stream] 知识图谱构建与画像更新完成")
                 
             except Exception as e:
-                logger.warning("[stream] 概念提炼或画像更新失败，降级到基本保存: %s", str(e), exc_info=True)
-                # 降级：使用基本保存方式（不依赖概念提炼）
+                logger.warning(
+                    "[stream] 概念提取或画像更新失败，降级到基本保存: %s",
+                    str(e),
+                    exc_info=True,
+                )
+                # 降级：使用基本保存方式（不依赖概念提取）
                 user_node_id = f"{conversation_id}_user"
                 await neo4j_client.save_dialogue_node(
                     node_id=user_node_id,
@@ -402,7 +423,7 @@ class AgentOrchestrator:
         parent_id: str,
         fragment_id: str,
         query: str,
-        selected_text: Optional[str] = None,
+        selected_text: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """
         处理递归追问（流式输出）
@@ -432,7 +453,14 @@ class AgentOrchestrator:
         logger.info(f"[stream] 生成对话 ID: {conversation_id}")
 
         # 首包：meta 信息
-        yield json.dumps({"type": "meta", "conversation_id": conversation_id, "parent_id": parent_id}, ensure_ascii=False) + "\n"
+        yield json.dumps(
+            {
+                "type": "meta",
+                "conversation_id": conversation_id,
+                "parent_id": parent_id,
+            },
+            ensure_ascii=False,
+        ) + "\n"
 
         # 构建提示词
         parent_snippet = (parent_context[:500] + "...") if parent_context else ""
@@ -467,9 +495,27 @@ class AgentOrchestrator:
                 answer_parts.append(delta)
                 yield json.dumps({"type": "delta", "text": delta}, ensure_ascii=False) + "\n"
             logger.info("[stream] LLM 流式生成完成")
+        except LLMRateLimitError as e:
+            logger.warning("[stream] Gemini 免费层限流: retry_after=%s", e.retry_after)
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": e.code,
+                    "message": str(e),
+                    "retry_after": e.retry_after,
+                },
+                ensure_ascii=False,
+            ) + "\n"
         except Exception as e:
             logger.error("[stream] LLM 流式生成失败: %s", str(e), exc_info=True)
-            yield json.dumps({"type": "error", "message": str(e)}, ensure_ascii=False) + "\n"
+            yield json.dumps(
+                {
+                    "type": "error",
+                    "code": "model_error",
+                    "message": "模型服务暂时不可用，请稍后重试。",
+                },
+                ensure_ascii=False,
+            ) + "\n"
         finally:
             # 结束标记
             yield json.dumps({"type": "end"}, ensure_ascii=False) + "\n"
@@ -498,90 +544,29 @@ class AgentOrchestrator:
     ):
         """
         [完美缝合版] 递归追问后处理：
-        1. 概念提炼 (参考祖先、计算画像)
+        1. 本地概念提取
         2. 画像更新 (更新学习状态)
         3. 图谱构建 (显式创建 _root 节点供前端渲染)
         """
-        logger.info("[stream] 开始后处理递归追问：概念提炼、画像更新与图谱构建...")
+        logger.info("[stream] 开始后处理递归追问：概念提取、画像更新与图谱构建...")
         
         try:
-            # =====================================================
-            # 1. 准备工作：获取祖先概念 (队友的新功能)
-            # =====================================================
-            ancestor_ids: list[str] = []
-            if parent_id:
-                try:
-                    ancestor_ids = [parent_id] + await neo4j_client.get_ancestor_node_ids(parent_id, max_depth=6)
-                except Exception as e:
-                    logger.warning("[stream] 获取祖先节点失败，仅用 parent_id: %s", str(e))
-                    ancestor_ids = [parent_id]
-            
-            ancestor_concepts: list[str] = []
-            if ancestor_ids:
-                # 这里假设 get_concepts_by_conversation_ids 是队友新加的函数
-                try:
-                    ancestor_concepts = await get_concepts_by_conversation_ids(ancestor_ids, user_id=user_id)
-                except:
-                    pass
+            # 1. 本地提取学习地图概念，避免后台再次消耗 Gemini 每日额度。
+            structure = extract_concept_structure(query, full_answer)
+            root_label = str(structure.get("root", "")).strip()
+            children = structure.get("children") or []
+            concepts = [root_label, *children] if root_label else list(children)
 
             # =====================================================
-            # 2. LLM 概念提炼 (队友的新逻辑)
-            # =====================================================
-            concepts: list[str] = []
-            root_label = ""
-            children = []
-            
-            try:
-                ancestor_hint = ""
-                if ancestor_concepts:
-                    ancestor_hint = (
-                        "\n以下为父/祖先对话中已出现的概念，请优先直接使用这些名称：\n"
-                        f"{json.dumps(ancestor_concepts[:30], ensure_ascii=False)}\n"
-                    )
-                
-                # 使用递归专用的 Prompt
-                extraction_prompt = CONCEPT_EXTRACTION_RECURSIVE.format(
-                    query=query,
-                    full_answer_truncated=full_answer[:2000],
-                    ancestor_hint=ancestor_hint,
-                )
-                summary_res = await self.llm.acomplete(extraction_prompt)
-                summary_text = summary_res.text if hasattr(summary_res, "text") else str(summary_res)
-                summary_text = summary_text.replace("```json", "").replace("```", "").strip()
-                
-                structure = json.loads(summary_text)
-                root_label = structure.get("root", "").strip()
-                children = structure.get("children") or []
-                
-                if root_label:
-                    concepts.append(root_label)
-                for c in children:
-                    if isinstance(c, str) and c.strip():
-                        concepts.append(c.strip())
-                
-                # 过滤长句
-                concepts = [c for c in concepts if len(c) <= 20]
-                
-                # 队友的别名逻辑
-                alias_suggestions = structure.get("alias_suggestions") or []
-                if alias_suggestions:
-                    try:
-                        append_aliases_and_reload(alias_suggestions)
-                    except: 
-                        pass
-                        
-            except Exception as e:
-                logger.warning("[stream] 递归追问概念提炼失败: %s", str(e), exc_info=True)
-
-            # =====================================================
-            # 3. 更新学习画像并计算分数 (队友的新逻辑)
+            # 2. 更新学习画像并计算分数
             # =====================================================
             node_mastery_score = 0.0
             try:
                 activity = await classify_activity(
                     self.llm, query, full_answer[:300] if full_answer else None
                 )
-                if activity is None: activity = "explain"
+                if activity is None:
+                    activity = "explain"
                 
                 learning_delta = await apply_learning_event_to_concepts(
                     raw_concepts=concepts,
@@ -594,7 +579,7 @@ class AgentOrchestrator:
                 logger.warning(f"[stream] 画像更新失败: {e}")
 
             # =====================================================
-            # 4. 保存基础对话结构 (User -> AI)
+            # 3. 保存基础对话结构 (User -> AI)
             # =====================================================
             user_node_id = f"{conversation_id}_user"
             ai_node_id = conversation_id
@@ -623,7 +608,7 @@ class AgentOrchestrator:
                 await neo4j_client.link_dialogue_nodes(parent_id, user_node_id)
 
             # =====================================================
-            # 5. ⭐⭐⭐ 找回的逻辑：构建思维导图节点 ⭐⭐⭐
+            # 4. 构建思维导图节点
             # 关键：必须创建 _root 节点，前端才能画出图来！
             # =====================================================
             if root_label:
@@ -661,7 +646,11 @@ class AgentOrchestrator:
                     # 连线：Root -> Child
                     await neo4j_client.link_dialogue_nodes(mindmap_root_id, child_id)
 
-                logger.info(f"[stream] 思维导图节点构建完成: Root={root_label}, Children={len(children)}")
+                logger.info(
+                    "[stream] 思维导图节点构建完成: Root=%s, Children=%s",
+                    root_label,
+                    len(children),
+                )
             else:
                 logger.warning("[stream] 未提取到 Root 概念，跳过思维导图节点创建")
 
@@ -678,7 +667,7 @@ class AgentOrchestrator:
         parent_id: str,
         fragment_id: str,
         query: str,
-        selected_text: Optional[str] = None,
+        selected_text: str | None = None,
     ) -> AgentResponse:
         """
         处理递归追问（非流式）

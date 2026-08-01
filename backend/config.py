@@ -45,6 +45,8 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gemini-3-flash-preview"
     LLM_CODER_MODEL: str = "gemini-3-flash-preview"
     GEMINI_THINKING_LEVEL: Literal["minimal", "low", "medium", "high"] = "medium"
+    # 免费层按项目与模型共享请求额度；统一限制短时间内的请求启动频率。
+    GEMINI_MIN_REQUEST_INTERVAL_SECONDS: float = 4.0
     
     # Neo4j 配置（容器内使用 localhost）
     NEO4J_URI: str = "bolt://localhost:7687"
