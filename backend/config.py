@@ -63,6 +63,10 @@ class Settings(BaseSettings):
     
     # 向量存储（根据环境自动选择路径）
     VECTOR_STORE_PATH: str = ""
+    UPLOAD_STORAGE_PATH: str = ""
+    RAG_EMBEDDING_MODEL: str = "BAAI/bge-small-zh-v1.5"
+    RAG_MAX_FILE_BYTES: int = 20 * 1024 * 1024
+    RAG_MAX_IMAGE_BYTES: int = 8 * 1024 * 1024
     
     # CORS（容器环境允许所有来源，本地开发使用特定来源）
     CORS_ORIGINS: str = ""
@@ -87,6 +91,12 @@ class Settings(BaseSettings):
                 self.VECTOR_STORE_PATH = get_storage_path("vector_store")
             else:
                 self.VECTOR_STORE_PATH = get_storage_path("storage/vector_store")
+
+        if not self.UPLOAD_STORAGE_PATH:
+            if is_docker_env():
+                self.UPLOAD_STORAGE_PATH = get_storage_path("uploads")
+            else:
+                self.UPLOAD_STORAGE_PATH = get_storage_path("storage/uploads")
         
         # 如果未设置 CORS_ORIGINS，根据环境自动设置
         if not self.CORS_ORIGINS:

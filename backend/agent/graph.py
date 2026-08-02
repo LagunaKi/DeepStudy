@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Literal
 
 from google.genai import types
@@ -17,6 +18,7 @@ from backend.agent.state import AgentState, AgentTraceEvent
 from backend.agent.tools import ToolRegistry
 from backend.data.neo4j_client import neo4j_client
 from backend.data.profile_store import apply_learning_event_to_concepts
+from backend.rag.service import rag_service
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +121,12 @@ def _system_instruction(state: AgentState) -> str:
     plan = "；".join(state.get("task_plan", []))
     recommended = state.get("recommended_tools", [])
     tool_hint = "、".join(recommended) if recommended else "无强制工具"
+    evidence = rag_service.evidence_prompt(state.get("retrieved_evidence", []))
+    evidence_block = (
+        f"\n\n课程资料证据（方括号编号是唯一允许使用的引用编号）：\n{evidence}"
+        if evidence
+        else ""
+    )
     return f"""你是 DeepStudy 自适应学习 Agent。{intent_instruction}
 
 执行计划摘要：{plan}
@@ -129,7 +137,9 @@ def _system_instruction(state: AgentState) -> str:
 2. 不能声称使用了未实际调用的工具或不存在的资料。
 3. 工具返回失败时明确说明降级，不要编造结果。
 4. 回答使用 Markdown，优先清晰、准确、适合学习，不展示内部思维链。
-"""
+5. 使用课程资料中的事实时，必须在对应句末用 [1]、[2] 格式引用；不得创造不存在的编号。
+6. 证据不足时明确说明，不用常识冒充课程资料内容。
+{evidence_block}"""
 
 
 def _to_gemini_contents(state: AgentState) -> list[types.Content]:
@@ -149,7 +159,27 @@ def _to_gemini_contents(state: AgentState) -> list[types.Content]:
     if parent_context:
         query = f"上一段回答上下文：{parent_context[:1500]}\n\n当前问题：{query}"
 
-    if not contents or contents[-1].role != "user":
+    image_attachments = [
+        attachment
+        for attachment in state.get("attachments", [])
+        if str(attachment.get("mime_type") or "").startswith("image/")
+        and attachment.get("status") == "ready"
+        and attachment.get("storage_path")
+    ]
+    if image_attachments:
+        if contents and contents[-1].role == "user":
+            contents.pop()
+        parts = [types.Part(text=query)]
+        for attachment in image_attachments:
+            try:
+                data = Path(str(attachment["storage_path"])).read_bytes()
+                parts.append(
+                    types.Part.from_bytes(data=data, mime_type=str(attachment["mime_type"]))
+                )
+            except OSError as exc:
+                logger.warning("读取图片附件失败: %s", exc)
+        contents.append(types.Content(role="user", parts=parts))
+    elif not contents or contents[-1].role != "user":
         contents.append(types.Content(role="user", parts=[types.Part(text=query)]))
     elif query not in (contents[-1].parts[0].text or ""):
         contents.append(types.Content(role="user", parts=[types.Part(text=query)]))
@@ -172,13 +202,15 @@ class DeepStudyAgentGraph:
         builder = StateGraph(AgentState)
         builder.add_node("router", self._router)
         builder.add_node("planner", self._planner)
+        builder.add_node("retriever", self._retriever)
         builder.add_node("agent_model", self._agent_model)
         builder.add_node("tool_executor", self._tool_executor)
         builder.add_node("verifier", self._verifier)
         builder.add_node("memory_writer", self._memory_writer)
         builder.add_edge(START, "router")
         builder.add_edge("router", "planner")
-        builder.add_edge("planner", "agent_model")
+        builder.add_edge("planner", "retriever")
+        builder.add_edge("retriever", "agent_model")
         builder.add_conditional_edges(
             "agent_model",
             self._next_after_model,
@@ -211,6 +243,41 @@ class DeepStudyAgentGraph:
             details={"steps": plan, "recommended_tools": recommended},
         )
         return {"task_plan": plan, "recommended_tools": recommended}
+
+    async def _retriever(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
+        document_ids = list(
+            dict.fromkeys(
+                str(item["document_id"])
+                for item in state.get("attachments", [])
+                if item.get("document_id") and item.get("status") == "ready"
+            )
+        )
+        try:
+            items = await rag_service.search(
+                state["query"],
+                user_id=state["user_id"],
+                session_id=state["session_id"],
+                document_ids=document_ids or None,
+                top_k=5,
+            )
+        except Exception as exc:
+            logger.warning("课程资料检索不可用，按无证据问答降级: %s", exc)
+            return {"retrieved_evidence": []}
+        if not items:
+            return {"retrieved_evidence": []}
+        _trace(
+            writer,
+            node="retriever",
+            title="Retriever · 混合检索",
+            summary=f"BM25、向量与图谱融合后保留 {len(items)} 条证据",
+            details={
+                "count": len(items),
+                "sources": [item["filename"] for item in items],
+                "method": "BM25 + dense + graph RRF rerank",
+            },
+        )
+        writer({"type": "sources", "items": items})
+        return {"retrieved_evidence": items}
 
     async def _agent_model(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
         contents = state.get("model_contents") or _to_gemini_contents(state)
@@ -269,6 +336,16 @@ class DeepStudyAgentGraph:
             ]
             fallback = "；".join(successful) if successful else "请换一种问法重试。"
             answer = f"工具执行完成。{fallback}"
+        evidence = [
+            item for item in state.get("retrieved_evidence", []) if "citation" in item
+        ]
+        valid_citation = any(f"[{item['citation']}]" in answer for item in evidence)
+        if evidence and not valid_citation:
+            suffix = "\n\n资料依据：" + " ".join(
+                f"[{item['citation']}]" for item in evidence[:3]
+            )
+            answer += suffix
+            writer({"type": "delta", "text": suffix})
         if not streamed_answer:
             writer({"type": "delta", "text": answer})
         _trace(
@@ -307,6 +384,7 @@ class DeepStudyAgentGraph:
                 call["name"],
                 call.get("arguments", {}),
                 user_id=state["user_id"],
+                session_id=state["session_id"],
                 call_id=call.get("call_id", ""),
             )
             records.append(record)
@@ -355,13 +433,26 @@ class DeepStudyAgentGraph:
         answer = state.get("answer", "").strip()
         tool_calls = state.get("tool_calls", [])
         failures = [call for call in tool_calls if call.get("status") == "error"]
+        evidence = state.get("retrieved_evidence", [])
+        citation_numbers = {
+            int(value) for value in re.findall(r"\[(\d+)]", answer)
+        }
+        valid_numbers = {int(item["citation"]) for item in evidence if "citation" in item}
         checks = {
             "answer_present": bool(answer),
             "question_covered": len(answer) >= 20,
             "tool_results_available": not tool_calls or len(failures) < len(tool_calls),
             "failed_tools": [call["name"] for call in failures],
+            "citations_required": bool(evidence),
+            "citations_valid": not evidence or bool(citation_numbers & valid_numbers),
+            "unknown_citations": sorted(citation_numbers - valid_numbers) if evidence else [],
         }
-        passed = checks["answer_present"] and checks["question_covered"]
+        passed = (
+            checks["answer_present"]
+            and checks["question_covered"]
+            and checks["citations_valid"]
+            and not checks["unknown_citations"]
+        )
         summary = "回答完整性检查通过" if passed else "回答较短或不完整，建议重试"
         if failures:
             summary += f"；{len(failures)} 个工具已降级"

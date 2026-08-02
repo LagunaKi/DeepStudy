@@ -36,6 +36,7 @@ services:
       NEO4J_PASSWORD: "${NEO4J_PASSWORD:-deepstudy-dev-only}"
       SQLITE_DB_PATH: "/data/deepstudy.db"
       VECTOR_STORE_PATH: "/data/vector_store"
+      UPLOAD_STORAGE_PATH: "/data/uploads"
       CORS_ORIGINS: '["http://localhost:7860"]'
       API_HOST: "0.0.0.0"
       API_PORT: "8000"

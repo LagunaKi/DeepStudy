@@ -2,9 +2,11 @@
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from backend.config import settings
 from backend.data.sqlite_db import get_db_connection
 
 DEFAULT_SESSION_TITLE = "新对话"
@@ -96,7 +98,7 @@ async def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
         message_cursor = await db.execute(
             """
             SELECT id, role, content, conversation_id, parent_id, status,
-                   agent_trace, created_at
+                   agent_trace, sources, created_at
             FROM chat_messages
             WHERE session_id = ?
             ORDER BY created_at ASC, rowid ASC
@@ -110,7 +112,29 @@ async def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
                 message["agent_trace"] = json.loads(message.get("agent_trace") or "[]")
             except (json.JSONDecodeError, TypeError):
                 message["agent_trace"] = []
+            try:
+                message["sources"] = json.loads(message.get("sources") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                message["sources"] = []
             messages.append(message)
+
+        attachment_cursor = await db.execute(
+            """
+            SELECT id, message_id, document_id, filename, mime_type, size_bytes,
+                   status, progress, error, created_at, updated_at
+            FROM message_attachments WHERE session_id = ?
+            ORDER BY created_at ASC
+            """,
+            (session_id,),
+        )
+        attachments_by_message: dict[str, list[dict[str, Any]]] = {}
+        for row in await attachment_cursor.fetchall():
+            attachment = dict(row)
+            message_id = attachment.pop("message_id", None)
+            if message_id:
+                attachments_by_message.setdefault(message_id, []).append(attachment)
+        for message in messages:
+            message["attachments"] = attachments_by_message.get(message["id"], [])
 
     result = dict(session)
     result["messages"] = messages
@@ -137,6 +161,7 @@ async def rename_session(session_id: str, user_id: str, title: str) -> bool:
 
 
 async def delete_session(session_id: str, user_id: str) -> bool:
+    storage_paths: list[str] = []
     async with get_db_connection() as db:
         owner_cursor = await db.execute(
             "SELECT 1 FROM chat_sessions WHERE id = ? AND user_id = ?",
@@ -145,13 +170,43 @@ async def delete_session(session_id: str, user_id: str) -> bool:
         if await owner_cursor.fetchone() is None:
             return False
 
+        attachment_cursor = await db.execute(
+            "SELECT storage_path FROM message_attachments WHERE session_id = ?",
+            (session_id,),
+        )
+        storage_paths = [
+            str(row["storage_path"])
+            for row in await attachment_cursor.fetchall()
+            if row["storage_path"]
+        ]
+
         # Explicit deletes keep behavior correct even if an older SQLite connection
         # was created without PRAGMA foreign_keys enabled.
+        chunks_cursor = await db.execute(
+            "SELECT id FROM rag_chunks WHERE session_id = ?", (session_id,)
+        )
+        for row in await chunks_cursor.fetchall():
+            await db.execute("DELETE FROM rag_chunks_fts WHERE chunk_id = ?", (row["id"],))
+        await db.execute("DELETE FROM rag_chunks WHERE session_id = ?", (session_id,))
+        await db.execute("DELETE FROM rag_documents WHERE session_id = ?", (session_id,))
         await db.execute("DELETE FROM message_attachments WHERE session_id = ?", (session_id,))
         await db.execute("DELETE FROM chat_messages WHERE session_id = ?", (session_id,))
         await db.execute("DELETE FROM chat_sessions WHERE id = ?", (session_id,))
         await db.commit()
-        return True
+
+    upload_root = Path(settings.UPLOAD_STORAGE_PATH).resolve()
+    for raw_path in storage_paths:
+        try:
+            path = Path(raw_path).resolve()
+            if path.is_relative_to(upload_root) and path.is_file():
+                path.unlink()
+                try:
+                    path.parent.rmdir()
+                except OSError:
+                    pass
+        except OSError:
+            pass
+    return True
 
 
 async def add_message(
@@ -163,6 +218,7 @@ async def add_message(
     parent_id: str | None = None,
     status: str = "complete",
     agent_trace: list[dict[str, Any]] | None = None,
+    sources: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     await ensure_session(session_id, user_id)
     message_id = str(uuid4())
@@ -179,8 +235,8 @@ async def add_message(
             """
             INSERT INTO chat_messages (
                 id, session_id, role, content, conversation_id,
-                parent_id, status, agent_trace, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                parent_id, status, agent_trace, sources, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id,
@@ -191,6 +247,7 @@ async def add_message(
                 parent_id,
                 status,
                 json.dumps(agent_trace or [], ensure_ascii=False),
+                json.dumps(sources or [], ensure_ascii=False),
                 timestamp,
             ),
         )
@@ -222,5 +279,7 @@ async def add_message(
         "parent_id": parent_id,
         "status": status,
         "agent_trace": agent_trace or [],
+        "sources": sources or [],
+        "attachments": [],
         "created_at": timestamp,
     }

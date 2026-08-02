@@ -34,6 +34,7 @@ class AgentState(TypedDict, total=False):
     query: str
     parent_id: str | None
     selected_text: str | None
+    attachments: list[dict[str, Any]]
     parent_context: str
     messages: list[dict[str, str]]
     user_profile: list[dict[str, Any]]

@@ -16,6 +16,22 @@ class FakeOrchestrator:
             "runtime": "langgraph",
         }
         yield {
+            "type": "sources",
+            "items": [
+                {
+                    "citation": 1,
+                    "document_id": "doc-1",
+                    "chunk_id": "chunk-1",
+                    "filename": "lesson.md",
+                    "version": 1,
+                    "page": None,
+                    "section": "RAG",
+                    "snippet": "检索证据",
+                    "score": 0.1,
+                }
+            ],
+        }
+        yield {
             "type": "agent",
             "node": "router",
             "status": "completed",
@@ -49,3 +65,4 @@ def test_chat_uses_standard_sse_and_persists_trace(tmp_path, monkeypatch) -> Non
     assert "\n\ndata:" in payload
     assert detail["messages"][1]["content"] == "这是 SSE 回答。"
     assert detail["messages"][1]["agent_trace"][0]["node"] == "router"
+    assert detail["messages"][1]["sources"][0]["chunk_id"] == "chunk-1"

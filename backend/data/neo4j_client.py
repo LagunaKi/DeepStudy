@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 from typing import List, Dict, Optional
 from datetime import datetime
 from neo4j import AsyncGraphDatabase
@@ -331,5 +332,86 @@ class Neo4jClient:
         except Exception as e:
             logger.error(f"Error finding learning path: {e}")
             return []
+
+    async def upsert_rag_document(self, document: Dict[str, Any], chunks: list[Any]) -> None:
+        """Persist the source-traceable Document→Chunk→Concept GraphRAG schema."""
+        rows = []
+        for chunk in chunks:
+            concepts = [
+                value.strip()
+                for value in str(chunk.section).split(" / ")
+                if value.strip() and value.strip() not in {"正文", "代码", "模块说明"}
+            ]
+            rows.append(
+                {
+                    "id": chunk.chunk_id,
+                    "index": chunk.chunk_index,
+                    "page": chunk.page,
+                    "section": chunk.section,
+                    "text": chunk.text[:4000],
+                    "concepts": concepts,
+                }
+            )
+        await self.query(
+            """
+            MERGE (d:Document {document_id: $document_id})
+            SET d.user_id = $user_id, d.session_id = $session_id,
+                d.filename = $filename, d.version = $version,
+                d.content_hash = $content_hash, d.status = 'ready'
+            WITH d
+            UNWIND $chunks AS item
+            MERGE (c:Chunk {chunk_id: item.id})
+            SET c.user_id = $user_id, c.session_id = $session_id,
+                c.document_id = $document_id, c.chunk_index = item.index,
+                c.page = item.page, c.section = item.section, c.text = item.text
+            MERGE (c)-[:PART_OF]->(d)
+            WITH c, item
+            UNWIND item.concepts AS concept_name
+            MERGE (concept:Concept {name: concept_name})
+            MERGE (c)-[:MENTIONS {source: 'document_heading'}]->(concept)
+            """,
+            {
+                "document_id": document["id"],
+                "user_id": document["user_id"],
+                "session_id": document["session_id"],
+                "filename": document["filename"],
+                "version": document["version"],
+                "content_hash": document["content_hash"],
+                "chunks": rows,
+            },
+        )
+
+    async def search_rag_chunk_ids(
+        self,
+        terms: list[str],
+        *,
+        user_id: str,
+        session_id: str | None,
+        limit: int,
+    ) -> list[str]:
+        if not terms:
+            return []
+        records = await self.query(
+            """
+            MATCH (c:Chunk)
+            OPTIONAL MATCH (c)-[:MENTIONS]->(concept:Concept)
+            WHERE c.user_id = $user_id
+              AND ($session_id IS NULL OR c.session_id = $session_id)
+              AND any(term IN $terms WHERE
+                  toLower(coalesce(concept.name, '')) CONTAINS toLower(term)
+                  OR toLower(term) CONTAINS toLower(coalesce(concept.name, ''))
+                  OR toLower(c.section) CONTAINS toLower(term)
+                  OR toLower(c.text) CONTAINS toLower(term))
+            RETURN DISTINCT c.chunk_id AS chunk_id
+            LIMIT $limit
+            """,
+            {
+                "terms": terms,
+                "user_id": user_id,
+                "session_id": session_id,
+                "limit": limit,
+            },
+        )
+        return [str(record.get("chunk_id")) for record in records if record.get("chunk_id")]
 # 全局客户端实例
 neo4j_client = Neo4jClient()

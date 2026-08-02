@@ -4,7 +4,6 @@ import ast
 import inspect
 import logging
 import operator
-import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -13,7 +12,6 @@ from typing import Any
 from google.genai import types
 from pydantic import BaseModel, Field, ValidationError
 
-from backend.config import settings
 from backend.data.neo4j_client import neo4j_client
 from backend.data.profile_store import get_all_profiles
 
@@ -126,29 +124,24 @@ async def query_concept_graph(concept: str, limit: int = 8) -> dict[str, Any]:
     return {"query": concept, "items": items, "count": len(items)}
 
 
-async def search_course_materials(query: str, top_k: int = 3) -> dict[str, Any]:
-    if not os.path.isdir(settings.VECTOR_STORE_PATH) or not os.listdir(
-        settings.VECTOR_STORE_PATH
-    ):
-        return {
-            "query": query,
-            "items": [],
-            "available": False,
-            "message": "课程资料索引为空，请先上传并完成索引。",
-        }
+async def search_course_materials(
+    query: str, top_k: int = 3, *, user_id: str, session_id: str
+) -> dict[str, Any]:
+    from backend.rag.service import rag_service
 
-    from backend.data.vector_store import get_vector_store_manager
-
-    manager = get_vector_store_manager()
-    if not manager.initialized:
-        return {
-            "query": query,
-            "items": [],
-            "available": False,
-            "message": "课程资料索引当前不可用。",
-        }
-    items = await manager.search_context(query, top_k=top_k)
-    return {"query": query, "items": items, "available": True, "count": len(items)}
+    items = await rag_service.search(
+        query,
+        user_id=user_id,
+        session_id=session_id,
+        top_k=top_k,
+    )
+    return {
+        "query": query,
+        "items": items,
+        "available": bool(items),
+        "count": len(items),
+        "message": "" if items else "当前会话没有可用的课程资料证据。",
+    }
 
 
 ToolHandler = Callable[..., dict[str, Any] | Awaitable[dict[str, Any]]]
@@ -161,6 +154,7 @@ class ToolDefinition:
     input_model: type[BaseModel]
     handler: ToolHandler
     inject_user_id: bool = False
+    inject_session_id: bool = False
 
     def gemini_declaration(self) -> types.FunctionDeclaration:
         schema = self.input_model.model_json_schema()
@@ -190,6 +184,7 @@ class ToolRegistry:
         arguments: dict[str, Any],
         *,
         user_id: str,
+        session_id: str = "",
         call_id: str = "",
     ) -> dict[str, Any]:
         started = time.perf_counter()
@@ -202,6 +197,8 @@ class ToolRegistry:
             kwargs = validated.model_dump()
             if definition.inject_user_id:
                 kwargs["user_id"] = user_id
+            if definition.inject_session_id:
+                kwargs["session_id"] = session_id
             result = definition.handler(**kwargs)
             if inspect.isawaitable(result):
                 result = await result
@@ -275,5 +272,7 @@ DEFAULT_TOOLS = [
         description="检索用户已经索引的课程资料。仅在问题要求依据课程资料时使用。",
         input_model=CourseSearchInput,
         handler=search_course_materials,
+        inject_user_id=True,
+        inject_session_id=True,
     ),
 ]

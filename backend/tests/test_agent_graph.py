@@ -64,6 +64,29 @@ class AgentGraphWithoutExternalMemory(DeepStudyAgentGraph):
         return {"memory_updates": []}
 
 
+class AgentGraphWithEvidence(AgentGraphWithoutExternalMemory):
+    async def _retriever(
+        self, _state: AgentState, writer: StreamWriter
+    ) -> dict[str, Any]:
+        items = [
+            {
+                "citation": 1,
+                "document_id": "doc-1",
+                "chunk_id": "chunk-1",
+                "filename": "lesson.md",
+                "version": 1,
+                "page": None,
+                "section": "Agent",
+                "text": "Agent 会根据目标选择工具。",
+                "snippet": "Agent 会根据目标选择工具。",
+                "score": 0.1,
+                "signals": {"bm25_rank": 1},
+            }
+        ]
+        writer({"type": "sources", "items": items})
+        return {"retrieved_evidence": items}
+
+
 def _state(query: str) -> AgentState:
     return {
         "user_id": "anonymous",
@@ -121,3 +144,19 @@ def test_simple_question_uses_one_model_request() -> None:
 
     asyncio.run(scenario())
     assert provider.calls == 1
+
+
+def test_retrieved_evidence_emits_sources_and_valid_citation() -> None:
+    runtime = AgentGraphWithEvidence(FakeProvider(use_tool=False))
+
+    async def scenario() -> list[dict[str, Any]]:
+        return [event async for event in runtime.stream(_state("课程里的 Agent 是什么？"))]
+
+    events = asyncio.run(scenario())
+    assert any(event.get("type") == "sources" for event in events)
+    assert any(
+        event.get("type") == "delta" and "资料依据：[1]" in event.get("text", "")
+        for event in events
+    )
+    verifier = next(event for event in events if event.get("node") == "verifier")
+    assert verifier["details"]["citations_valid"] is True

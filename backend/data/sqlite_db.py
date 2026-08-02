@@ -116,6 +116,7 @@ async def init_db():
             parent_id TEXT,
             status TEXT NOT NULL DEFAULT 'complete',
             agent_trace TEXT NOT NULL DEFAULT '[]',
+            sources TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
         )
@@ -127,6 +128,10 @@ async def init_db():
     if "agent_trace" not in columns:
         await db.execute(
             "ALTER TABLE chat_messages ADD COLUMN agent_trace TEXT NOT NULL DEFAULT '[]'"
+        )
+    if "sources" not in columns:
+        await db.execute(
+            "ALTER TABLE chat_messages ADD COLUMN sources TEXT NOT NULL DEFAULT '[]'"
         )
 
     await db.execute("""
@@ -144,14 +149,89 @@ async def init_db():
             id TEXT PRIMARY KEY,
             session_id TEXT NOT NULL,
             message_id TEXT,
+            document_id TEXT,
             filename TEXT NOT NULL,
             mime_type TEXT NOT NULL,
             size_bytes INTEGER NOT NULL,
             status TEXT NOT NULL DEFAULT 'pending',
+            progress INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            storage_path TEXT,
             created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE,
             FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE SET NULL
         )
+    """)
+
+    attachment_columns_cursor = await db.execute("PRAGMA table_info(message_attachments)")
+    attachment_columns = {row[1] for row in await attachment_columns_cursor.fetchall()}
+    for column, definition in {
+        "document_id": "TEXT",
+        "progress": "INTEGER NOT NULL DEFAULT 0",
+        "error": "TEXT",
+        "storage_path": "TEXT",
+        "updated_at": "TEXT NOT NULL DEFAULT ''",
+    }.items():
+        if column not in attachment_columns:
+            await db.execute(
+                f"ALTER TABLE message_attachments ADD COLUMN {column} {definition}"
+            )
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS rag_documents (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            mime_type TEXT NOT NULL,
+            size_bytes INTEGER NOT NULL,
+            content_hash TEXT NOT NULL,
+            version INTEGER NOT NULL,
+            status TEXT NOT NULL,
+            progress INTEGER NOT NULL DEFAULT 0,
+            error TEXT,
+            page_count INTEGER,
+            chunk_count INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, session_id, filename, content_hash)
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS rag_chunks (
+            id TEXT PRIMARY KEY,
+            document_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            session_id TEXT NOT NULL,
+            chunk_index INTEGER NOT NULL,
+            page INTEGER,
+            section TEXT NOT NULL,
+            content TEXT NOT NULL,
+            content_hash TEXT NOT NULL,
+            lexical_text TEXT NOT NULL,
+            embedding TEXT,
+            embedding_model TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY (document_id) REFERENCES rag_documents(id) ON DELETE CASCADE,
+            UNIQUE(document_id, chunk_index)
+        )
+    """)
+    await db.execute("""
+        CREATE VIRTUAL TABLE IF NOT EXISTS rag_chunks_fts USING fts5(
+            chunk_id UNINDEXED,
+            content,
+            lexical_text,
+            tokenize='unicode61'
+        )
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rag_documents_session_status
+        ON rag_documents(user_id, session_id, status, updated_at DESC)
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_rag_chunks_session_document
+        ON rag_chunks(user_id, session_id, document_id, chunk_index)
     """)
 
     await db.commit()

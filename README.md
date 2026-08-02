@@ -37,6 +37,8 @@ DeepStudy/
 - **流式对话**：首轮提问与划词追问均支持流式输出。
 - **Agent 主链路**：Router → Planner → Gemini Function Calling → Tool Executor → Verifier → Memory Writer。
 - **Agent Trace**：通过标准 SSE 实时展示节点、工具参数摘要与验证结果，并随历史消息持久化。
+- **RAG / GraphRAG**：课程资料经过结构化切片、BM25 + 向量 + 图谱融合检索与重排，回答展示页码、章节和可点击来源。
+- **多模态附件**：支持直接粘贴图片，也支持上传图片、PDF、Markdown、TXT 与常见代码文件；图片直接交给 Gemini 理解，文档显示解析/索引进度。
 - **知识图谱**：对话树与概念节点写入 Neo4j，侧边栏用 ReactFlow 展示；学习计划内的概念在图谱上以淡绿色卡片高亮。
 - **学习画像**：按概念维护 U/R/A 与练习次数；支持查看和删除；Memory Writer 用本地概念提取更新画像，避免额外消耗免费模型请求。
 - **学习计划**：用户手动维护的“待重点学习”概念列表，存于后端（多设备/刷新同步）；在学习画像弹层中左侧为概念列表、右侧为学习计划，支持从左侧拖拽或点击「加入计划」，右侧可「移出计划」。
@@ -143,6 +145,9 @@ npm run dev
 make test
 make build
 make compose-config
+
+# 30 条检索回归集（输出 Recall@5、MRR、nDCG@5）
+python -m backend.evals.run_rag_eval
 ```
 
 ## 开发规范

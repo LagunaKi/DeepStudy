@@ -34,6 +34,8 @@ class SessionMessage(BaseModel):
     parent_id: str | None = None
     status: str
     agent_trace: list[dict[str, Any]] = Field(default_factory=list)
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    attachments: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
 
 

@@ -24,9 +24,6 @@ app = FastAPI(
     version="0.3.0"
 )
 
-# 注册知识库路由（在 CORS 之前）
-app.include_router(knowledge.router)
-
 # 配置 CORS
 cors_origins = json.loads(settings.CORS_ORIGINS) if isinstance(settings.CORS_ORIGINS, str) else settings.CORS_ORIGINS
 app.add_middleware(
@@ -42,6 +39,7 @@ app.include_router(chat.router, prefix="/api")
 app.include_router(mindmap.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
+app.include_router(knowledge.router, prefix="/api")
 
 
 @app.on_event("startup")

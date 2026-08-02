@@ -74,6 +74,15 @@ API 文档：http://localhost:8000/docs
 - **POST /api/chat**  
   Body: `query`, `parent_id?`, `ref_fragment_id?`, `selected_text?`, `session_id`  
   标准 SSE：`type: meta | agent | delta | error | end`。`agent` 包含可安全展示的节点摘要，Trace 会随历史消息持久化。
+  请求可带 `attachment_ids`；有课程资料时额外输出 `sources` 事件。
+
+### 课程资料
+
+- **POST /api/knowledge/upload**：multipart `session_id` + `file`，返回附件与文档处理状态。
+- **GET /api/knowledge/documents?session_id=**：列出当前会话资料与解析进度。
+- **POST /api/knowledge/search**：执行混合检索与重排。
+- **GET /api/knowledge/documents/{id}/content**：打开引用对应的原始文件。
+- **GET /api/knowledge/graph?session_id=**：返回 Document–Chunk–Concept 来源图。
 
 ### 思维导图
 

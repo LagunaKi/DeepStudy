@@ -12,6 +12,9 @@ import {
   ChatSessionDetail,
   ChatSessionSummary,
   AgentTraceEvent,
+  AttachmentInfo,
+  RAGDocument,
+  RAGSource,
 } from '../types/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -32,6 +35,46 @@ export interface ChatStreamEvent {
   summary?: string
   details?: Record<string, unknown>
   timestamp?: string
+  items?: RAGSource[]
+}
+
+export const knowledgeAPI = {
+  upload: async (
+    sessionId: string,
+    file: File,
+  ): Promise<{ attachment: AttachmentInfo; document: RAGDocument | null; deduplicated: boolean }> => {
+    const body = new FormData()
+    body.append('session_id', sessionId)
+    body.append('file', file)
+    const response = await fetch(`${API_BASE_URL}/knowledge/upload`, { method: 'POST', body })
+    const payload = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(payload.detail || `上传失败: ${response.status}`)
+    return payload
+  },
+
+  getDocument: async (documentId: string): Promise<RAGDocument> => {
+    const response = await apiClient.get<RAGDocument>(`/knowledge/documents/${documentId}`)
+    return response.data
+  },
+
+  listDocuments: async (sessionId: string): Promise<RAGDocument[]> => {
+    const response = await apiClient.get<RAGDocument[]>('/knowledge/documents', {
+      params: { session_id: sessionId },
+    })
+    return response.data
+  },
+
+  sourceUrl: (source: RAGSource): string => {
+    const page = source.page ? `#page=${source.page}` : ''
+    return `${API_BASE_URL}/knowledge/documents/${source.document_id}/content${page}`
+  },
+
+  getGraph: async (sessionId: string): Promise<MindMapGraph> => {
+    const response = await apiClient.get<MindMapGraph>('/knowledge/graph', {
+      params: { session_id: sessionId },
+    })
+    return response.data
+  },
 }
 
 /**

@@ -65,6 +65,7 @@ class AgentOrchestrator:
         parent_id: str | None,
         session_id: str | None,
         selected_text: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> AgentState:
         actual_session_id = session_id or f"ephemeral-{uuid.uuid4()}"
         return {
@@ -74,6 +75,7 @@ class AgentOrchestrator:
             "query": query,
             "parent_id": parent_id,
             "selected_text": selected_text,
+            "attachments": attachments or [],
             "parent_context": await self._parent_context(parent_id),
             "messages": await self._session_messages(session_id, user_id),
             "user_profile": [],
@@ -95,12 +97,14 @@ class AgentOrchestrator:
         query: str,
         parent_id: str | None = None,
         session_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         state = await self._initial_state(
             user_id=user_id,
             query=query,
             parent_id=parent_id,
             session_id=session_id,
+            attachments=attachments,
         )
         yield {
             "type": "meta",
@@ -120,6 +124,7 @@ class AgentOrchestrator:
         query: str,
         selected_text: str | None = None,
         session_id: str | None = None,
+        attachments: list[dict[str, Any]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         del fragment_id  # 片段 ID 只用于前端定位，选中文本已进入 AgentState。
         state = await self._initial_state(
@@ -128,6 +133,7 @@ class AgentOrchestrator:
             parent_id=parent_id,
             session_id=session_id,
             selected_text=selected_text,
+            attachments=attachments,
         )
         yield {
             "type": "meta",

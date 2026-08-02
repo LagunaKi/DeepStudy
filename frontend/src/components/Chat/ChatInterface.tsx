@@ -3,6 +3,7 @@ import axios from 'axios'
 import {
   ChatStreamEvent,
   chatAPI,
+  knowledgeAPI,
   mindMapAPI,
   profileAPI,
   sessionAPI,
@@ -10,6 +11,7 @@ import {
 import {
   AgentResponse,
   AgentTraceEvent,
+  AttachmentInfo,
   ChatSessionDetail,
   ChatSessionSummary,
   ConceptProfileSummary,
@@ -28,6 +30,7 @@ interface ChatTurn {
   assistant: AgentResponse
   status: 'loading' | 'complete' | 'error'
   trace: AgentTraceEvent[]
+  attachments: AttachmentInfo[]
 }
 
 const emptyAssistant = (parentId: string | null = null): AgentResponse => ({
@@ -37,6 +40,7 @@ const emptyAssistant = (parentId: string | null = null): AgentResponse => ({
   suggestion: undefined,
   conversation_id: '',
   parent_id: parentId,
+  sources: [],
 })
 
 const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
@@ -49,6 +53,7 @@ const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
         assistant: emptyAssistant(message.parent_id || null),
         status: 'complete',
         trace: [],
+        attachments: message.attachments || [],
       })
       return
     }
@@ -59,6 +64,7 @@ const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
       ...emptyAssistant(message.parent_id || null),
       answer: message.status === 'error' ? '' : message.content,
       conversation_id: message.conversation_id || '',
+      sources: message.sources || [],
     }
     target.status = message.status === 'error' ? 'error' : 'complete'
     target.trace = message.agent_trace || []
@@ -71,6 +77,7 @@ const ChatInterface = () => {
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   
   // --- 基础 State ---
@@ -89,6 +96,8 @@ const ChatInterface = () => {
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [pendingAttachments, setPendingAttachments] = useState<AttachmentInfo[]>([])
+  const [uploading, setUploading] = useState(false)
   
   const [questionModalOpen, setQuestionModalOpen] = useState(false)
   const [selectedFragmentId, setSelectedFragmentId] = useState<string>('')
@@ -104,6 +113,7 @@ const ChatInterface = () => {
   // ⭐⭐⭐ 核心 State ⭐⭐⭐
   // 1. mindMapData: 最终展示给用户的完整大图
   const [mindMapData, setMindMapData] = useState<MindMapGraph>({ nodes: [], edges: [] })
+  const [domainGraphData, setDomainGraphData] = useState<MindMapGraph>({ nodes: [], edges: [] })
   
   // 2. currentPollingId: 当前正在发生的对话 ID (每次提问都会变)
   const [currentPollingId, setCurrentPollingId] = useState<string | null>(null)
@@ -210,6 +220,22 @@ const ChatInterface = () => {
     };
   }, [currentPollingId, sidebarOpen]); // 只要 ID 变了，就立刻开始查新 ID
 
+  useEffect(() => {
+    if (mapView !== 'graph' || !activeSessionId || !sidebarOpen) return
+    let mounted = true
+    const refresh = () => {
+      knowledgeAPI.getGraph(activeSessionId).then((data) => {
+        if (mounted) setDomainGraphData(data)
+      }).catch(() => {})
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 3000)
+    return () => {
+      mounted = false
+      window.clearInterval(timer)
+    }
+  }, [activeSessionId, mapView, sidebarOpen])
+
   // ==========================================
 
   const refreshSessions = useCallback(async () => {
@@ -227,7 +253,9 @@ const ChatInterface = () => {
       const loadedTurns = detailToTurns(detail)
       setActiveSessionId(sessionId)
       setTurns(loadedTurns)
+      setPendingAttachments([])
       setMindMapData({ nodes: [], edges: [] })
+      setDomainGraphData({ nodes: [], edges: [] })
       const latestConversationId = [...loadedTurns]
         .reverse()
         .find((turn) => turn.assistant.conversation_id)?.assistant.conversation_id
@@ -249,7 +277,9 @@ const ChatInterface = () => {
       setSessions((previous) => [created, ...previous])
       setActiveSessionId(created.id)
       setTurns([])
+      setPendingAttachments([])
       setMindMapData({ nodes: [], edges: [] })
+      setDomainGraphData({ nodes: [], edges: [] })
       setCurrentPollingId(null)
       requestAnimationFrame(() => inputRef.current?.focus())
     } catch (sessionError) {
@@ -365,10 +395,102 @@ const ChatInterface = () => {
     }
   }, [turns, loading, hasFirstChunk])
 
+  const pollDocument = useCallback(async (documentId: string, attachmentId: string) => {
+    for (let attempt = 0; attempt < 90; attempt += 1) {
+      await new Promise((resolve) => window.setTimeout(resolve, 1000))
+      const document = await knowledgeAPI.getDocument(documentId)
+      setPendingAttachments((previous) => previous.map((attachment) => (
+        attachment.id === attachmentId
+          ? { ...attachment, status: document.status, progress: document.progress, error: document.error }
+          : attachment
+      )))
+      if (document.status === 'ready') return
+      if (document.status === 'failed') {
+        setError(`${document.filename} 解析失败：${document.error || '未知原因'}`)
+        return
+      }
+    }
+    setError('文档处理时间较长，可稍后在当前会话继续提问')
+  }, [])
+
+  const uploadFiles = useCallback(async (files: File[]) => {
+    if (!files.length || uploading) return
+    let sessionId = activeSessionId
+    setUploading(true)
+    setError('')
+    try {
+      if (!sessionId) {
+        const created = await sessionAPI.create()
+        sessionId = created.id
+        setSessions((previous) => [created, ...previous])
+        setActiveSessionId(created.id)
+      }
+      const availableSlots = Math.max(0, 8 - pendingAttachments.length)
+      if (availableSlots === 0) {
+        setError('每轮最多添加 8 个附件')
+        return
+      }
+      for (const file of files.slice(0, availableSlots)) {
+        const result = await knowledgeAPI.upload(sessionId, file)
+        setPendingAttachments((previous) => [...previous, result.attachment])
+        if (result.document && !['ready', 'failed'].includes(result.document.status)) {
+          void pollDocument(result.document.id, result.attachment.id)
+        }
+      }
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : '附件上传失败')
+    } finally {
+      setUploading(false)
+    }
+  }, [activeSessionId, pendingAttachments.length, pollDocument, uploading])
+
+  const handleFileUpload = useCallback((event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || [])
+    event.target.value = ''
+    void uploadFiles(files)
+  }, [uploadFiles])
+
+  const handlePaste = useCallback((event: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const pastedImages = Array.from(event.clipboardData.items)
+      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+      .map((item, index) => {
+        const image = item.getAsFile()
+        if (!image) return null
+        const subtype = image.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'
+        const filename = image.name && image.name !== 'image.png'
+          ? image.name
+          : `clipboard-${Date.now()}-${index + 1}.${subtype}`
+        return new File([image], filename, { type: image.type, lastModified: Date.now() })
+      })
+      .filter((file): file is File => file !== null)
+
+    if (!pastedImages.length) return
+    event.preventDefault()
+    if (loading || uploading) {
+      setError('请等待当前操作完成后再粘贴图片')
+      return
+    }
+    void uploadFiles(pastedImages)
+  }, [loading, uploadFiles, uploading])
+
   const handleSend = async (refFragmentId?: string, selectedText?: string, queryOverride?: string) => {
-    const query = (queryOverride || input).trim()
+    const typedQuery = (queryOverride || input).trim()
+    const hasImage = pendingAttachments.some(
+      (attachment) => attachment.status === 'ready' && attachment.mime_type.startsWith('image/')
+    )
+    const query = typedQuery || (
+      hasImage
+        ? '请分析这张图片。'
+        : pendingAttachments.length > 0
+          ? '请总结这份资料的核心内容。'
+          : ''
+    )
     if (!query || loading) return
     if (cooldownSeconds > 0 || quotaExhausted) return
+    if (pendingAttachments.some((attachment) => attachment.status !== 'ready')) {
+      setError('请等待附件解析完成，或移除失败的附件后再发送')
+      return
+    }
 
     let sessionId = activeSessionId
     if (!sessionId) {
@@ -393,6 +515,7 @@ const ChatInterface = () => {
       .reverse()
       .find((turn) => turn.assistant.conversation_id)?.assistant.conversation_id || null
     const turnId = crypto.randomUUID()
+    const turnAttachments = [...pendingAttachments]
     setTurns((previous) => [
       ...previous,
       {
@@ -401,6 +524,7 @@ const ChatInterface = () => {
         assistant: emptyAssistant(parentId),
         status: 'loading',
         trace: [],
+        attachments: turnAttachments,
       },
     ])
 
@@ -410,6 +534,7 @@ const ChatInterface = () => {
       )))
     }
 
+    let streamFailed = false
     try {
       await chatAPI.sendMessageStream(
         {
@@ -418,6 +543,7 @@ const ChatInterface = () => {
           ref_fragment_id: refFragmentId || null,
           selected_text: selectedText || null,
           session_id: sessionId,
+          attachment_ids: turnAttachments.map((attachment) => attachment.id),
         },
         (payload: ChatStreamEvent) => {
           
@@ -440,6 +566,11 @@ const ChatInterface = () => {
           } else if (payload.type === 'agent' && payload.node && payload.status && payload.title && payload.summary) {
             const event = payload as AgentTraceEvent
             updateTurn((turn) => ({ ...turn, trace: [...turn.trace, event] }))
+          } else if (payload.type === 'sources' && payload.items) {
+            updateTurn((turn) => ({
+              ...turn,
+              assistant: { ...turn.assistant, sources: payload.items },
+            }))
           } else if (payload.type === 'delta' && payload.text) {
             setHasFirstChunk(true)
             updateTurn((turn) => ({
@@ -459,6 +590,7 @@ const ChatInterface = () => {
               },
             }))
           } else if (payload.type === 'error') {
+            streamFailed = true
             updateTurn((turn) => ({ ...turn, status: 'error' }))
             if (payload.code === 'quota_exhausted') {
               setQuotaExhausted(true)
@@ -474,6 +606,7 @@ const ChatInterface = () => {
         }
       )
       updateTurn((turn) => ({ ...turn, status: turn.status === 'error' ? 'error' : 'complete' }))
+      if (!streamFailed) setPendingAttachments([])
     } catch (error: unknown) {
       console.error('发送消息失败:', error)
       updateTurn((turn) => ({ ...turn, status: 'error' }))
@@ -731,6 +864,14 @@ const ChatInterface = () => {
     borderRadius: '8px',
     fontSize: '14px',
   }
+  const sendDisabled = (
+    loading
+    || cooldownSeconds > 0
+    || quotaExhausted
+    || uploading
+    || pendingAttachments.some((attachment) => attachment.status !== 'ready')
+    || (!input.trim() && pendingAttachments.length === 0)
+  )
 
   return (
     <div style={containerStyle} ref={containerRef}>
@@ -806,6 +947,18 @@ const ChatInterface = () => {
               <div style={userMessageStyle}>
                 <div style={userBubbleStyle}>
                   {turn.user}
+                  {turn.attachments.length > 0 && (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '8px' }}>
+                      {turn.attachments.map((attachment) => (
+                        <span
+                          key={attachment.id}
+                          style={{ fontSize: '11px', padding: '3px 7px', borderRadius: '999px', background: 'rgba(255,255,255,.18)' }}
+                        >
+                          📎 {attachment.filename}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
               <div style={aiMessageStyle}>
@@ -815,11 +968,36 @@ const ChatInterface = () => {
                     active={turn.status === 'loading' && loading && index === turns.length - 1}
                   />
                   {turn.assistant.answer ? (
+                    <>
                       <TextFragment
                         content={turn.assistant.answer}
                         fragments={turn.assistant.fragments || []}
                         onFragmentSelect={handleFragmentSelect}
                       />
+                      {(turn.assistant.sources || []).length > 0 && (
+                        <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid #E5E7EB' }}>
+                          <div style={{ fontSize: '12px', fontWeight: 650, color: '#374151', marginBottom: '8px' }}>
+                            来源
+                          </div>
+                          <div style={{ display: 'grid', gap: '7px' }}>
+                            {(turn.assistant.sources || []).map((source) => (
+                              <a
+                                key={source.chunk_id}
+                                href={knowledgeAPI.sourceUrl(source)}
+                                target="_blank"
+                                rel="noreferrer"
+                                style={{ color: '#1D4ED8', fontSize: '12px', textDecoration: 'none' }}
+                                title={source.snippet}
+                              >
+                                [{source.citation}] {source.filename}
+                                {source.page ? ` · 第 ${source.page} 页` : ''}
+                                {source.section ? ` · ${source.section}` : ''}
+                              </a>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </>
                     ) : turn.status === 'loading' && loading && !hasFirstChunk && index === turns.length - 1 ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#6B7280' }}>
                           <div style={{
@@ -889,7 +1067,42 @@ const ChatInterface = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        <div style={inputAreaStyle}>
+        {pendingAttachments.length > 0 && (
+          <div style={{ padding: '10px 24px 0', borderTop: '1px solid #E5E7EB', background: 'white', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+            {pendingAttachments.map((attachment) => (
+              <div key={attachment.id} style={{ display: 'flex', alignItems: 'center', gap: '7px', padding: '7px 9px', border: '1px solid #D1D5DB', borderRadius: '8px', fontSize: '12px' }}>
+                <span>{attachment.mime_type.startsWith('image/') ? '🖼️' : '📎'} {attachment.filename}</span>
+                <span style={{ color: attachment.status === 'failed' ? '#B91C1C' : '#6B7280' }}>
+                  {attachment.status === 'ready' ? '可用' : attachment.status === 'failed' ? '失败' : `${attachment.progress}%`}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`移除 ${attachment.filename}`}
+                  onClick={() => setPendingAttachments((previous) => previous.filter((item) => item.id !== attachment.id))}
+                  style={{ border: 0, background: 'none', cursor: 'pointer', color: '#6B7280' }}
+                >×</button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ ...inputAreaStyle, borderTop: pendingAttachments.length ? 'none' : inputAreaStyle.borderTop }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            accept=".pdf,.md,.markdown,.txt,.py,.js,.jsx,.ts,.tsx,.java,.c,.cpp,.h,.hpp,.go,.rs,.sql,.json,.yaml,.yml,.html,.css,.scss,.sh,.png,.jpg,.jpeg,.webp,.gif"
+            onChange={handleFileUpload}
+            style={{ display: 'none' }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loading || uploading}
+            title="上传课程资料或图片"
+            style={{ padding: '11px 13px', border: '1px solid #D1D5DB', borderRadius: '8px', background: 'white', cursor: loading || uploading ? 'not-allowed' : 'pointer' }}
+          >
+            {uploading ? '上传中…' : '📎'}
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -898,7 +1111,8 @@ const ChatInterface = () => {
               setError('')
             }}
             onKeyDown={handleKeyDown}
-            placeholder="输入你的问题... (Enter 发送, Shift+Enter 换行)"
+            onPaste={handlePaste}
+            placeholder="输入问题或直接粘贴图片… (Enter 发送)"
             disabled={loading}
             style={{
               ...textareaStyle,
@@ -916,10 +1130,10 @@ const ChatInterface = () => {
           />
           <button
             onClick={() => handleSend()}
-            disabled={loading || cooldownSeconds > 0 || quotaExhausted || !input.trim()}
-            style={buttonStyle}
+            disabled={sendDisabled}
+            style={{ ...buttonStyle, cursor: sendDisabled ? 'not-allowed' : 'pointer', opacity: sendDisabled ? 0.6 : 1 }}
             onMouseEnter={(e) => {
-              if (!loading && cooldownSeconds === 0 && !quotaExhausted && input.trim()) {
+              if (!sendDisabled) {
                 e.currentTarget.style.backgroundColor = '#1D4ED8'
               }
             }}
@@ -1000,7 +1214,7 @@ const ChatInterface = () => {
           </div>
           <div style={{ flex: 1, padding: '16px', overflow: 'hidden' }}>
             <KnowledgeGraph
-              data={mindMapData}
+              data={mapView === 'mindmap' ? mindMapData : domainGraphData}
               planConcepts={planList}
               viewMode={mapView}
             />

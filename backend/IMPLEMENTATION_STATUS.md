@@ -95,20 +95,30 @@ Memory Writer 已作为 LangGraph 一等节点存在，当前写入范围是：
 
 这属于阶段 1 的结构化学习记忆，不等同于阶段 3 的完整分层长期 Memory。跨会话语义记忆、情景记忆、记忆查看/遗忘与持久化 Checkpoint 尚未完成。
 
+## 阶段 2 已完成
+
+- 上传链路支持图片、PDF、Markdown、TXT 与常见代码文件；文件带大小限制、安全文件名、内容哈希去重和同名版本号。
+- PDF 保留页码，Markdown 保留标题层级，代码优先按类/函数切片；所有片段保留来源字段。
+- 文档状态按 queued、parsing、embedding、indexing、ready/failed 持久化，前端展示进度与失败原因。
+- 检索使用 SQLite FTS5 BM25、BGE 向量和 Neo4j 来源图，通过 RRF 融合并按词项覆盖率重排；BGE 不可用时退化为确定性字符 n-gram 向量。
+- LangGraph 增加 Retriever 节点，证据在模型生成前注入；回答和历史消息持久化可点击来源，Verifier 检查引用编号。
+- 图片附件可通过文件选择或聊天输入框直接粘贴，并通过 Gemini 原生多模态 Part 进入当前问题，不写入文本向量索引。
+- Neo4j 使用 Document、Chunk、Concept 与 PART_OF、MENTIONS 来源 Schema；前端“关系图”展示领域图谱，“思维导图”继续展示学习过程。
+- `backend/evals` 提供 30 条检索集和 Recall@5、MRR、nDCG@5 回归脚本。
+
 ## 当前仍未完成
 
-- 阶段 2：图片/PDF/Markdown/TXT 上传接入聊天、结构化切片、混合检索、rerank、回答引用和来源可追溯 GraphRAG。
 - 阶段 3：LangGraph 持久化 Checkpoint 与中断恢复、完整分层 Memory、Skills 运行时、DeepStudy MCP Server。
 - 多用户认证：当前仍使用 `anonymous`。
-- 完整知识图谱高级视图：当前“关系图”是同一学习子图的不同布局；领域 KG Schema 与来源边在阶段 2 实现。
-- Verifier 目前不做 LLM 事实核查或引用一致性判断；阶段 2 有真实证据后再扩展。
+- Verifier 已检查引用编号存在性，但还不是独立 LLM 事实核查器。
 
 ## 测试状态
 
-- 后端 pytest：20 条测试通过。
+- 后端 pytest：24 条测试通过。
 - 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
 - 前端 ESLint 与 TypeScript/Vite production build 通过。
 - LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。
+- RAG 离线 fixture：30 条查询，Recall@5 1.0000、MRR 0.9444、nDCG@5 0.9587；仅作为代码回归基线。
 
 ## 面试口径
 

@@ -38,6 +38,48 @@ export interface ChatRequest {
   ref_fragment_id?: string | null // 如果是划词追问，需带上片段 ID
   selected_text?: string | null // 如果是划词追问，需带上选中的文本
   session_id: string // 会话 ID，区分不同学习主题
+  attachment_ids?: string[]
+}
+
+export interface AttachmentInfo {
+  id: string
+  document_id?: string | null
+  filename: string
+  mime_type: string
+  size_bytes: number
+  status: 'queued' | 'parsing' | 'embedding' | 'indexing' | 'ready' | 'failed' | string
+  progress: number
+  error?: string | null
+  created_at?: string
+  updated_at?: string
+}
+
+export interface RAGDocument {
+  id: string
+  session_id: string
+  filename: string
+  mime_type: string
+  size_bytes: number
+  version: number
+  status: AttachmentInfo['status']
+  progress: number
+  error?: string | null
+  page_count?: number | null
+  chunk_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface RAGSource {
+  citation: number
+  document_id: string
+  chunk_id: string
+  filename: string
+  version: number
+  page?: number | null
+  section: string
+  snippet: string
+  score: number
 }
 
 export interface ChatSessionMessage {
@@ -48,6 +90,8 @@ export interface ChatSessionMessage {
   parent_id?: string | null
   status: 'complete' | 'error' | string
   agent_trace?: AgentTraceEvent[]
+  sources?: RAGSource[]
+  attachments?: AttachmentInfo[]
   created_at: string
 }
 
@@ -101,6 +145,7 @@ export interface AgentResponse {
   suggestion?: string // 诊断建议，例如："建议复习特征值相关概念"
   conversation_id: string
   parent_id?: string | null
+  sources?: RAGSource[]
 }
 
 /**

@@ -14,6 +14,10 @@ from backend.api.schemas.request import ChatRequest
 from backend.api.schemas.response import DialogueNodeBase
 from backend.data.conversation_store import add_message
 from backend.data.neo4j_client import neo4j_client
+from backend.data.rag_store import (
+    get_attachments,
+    link_attachments_to_message,
+)
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -48,6 +52,10 @@ async def chat(request: ChatRequest):
         orchestrator = AgentOrchestrator()
         logger.info("Orchestrator 初始化成功")
 
+        attachments = await get_attachments(request.attachment_ids, request.session_id)
+        if len(attachments) != len(set(request.attachment_ids)):
+            raise HTTPException(status_code=400, detail="部分附件不存在或不属于当前会话")
+
         # 统一使用流式输出
         if request.ref_fragment_id:
             logger.info("处理划词追问（流式）...")
@@ -58,6 +66,7 @@ async def chat(request: ChatRequest):
                 query=request.query,
                 selected_text=request.selected_text,
                 session_id=request.session_id,
+                attachments=attachments,
             )
         else:
             logger.info("处理普通提问（流式）...")
@@ -66,14 +75,18 @@ async def chat(request: ChatRequest):
                 query=request.query,
                 parent_id=request.parent_id,
                 session_id=request.session_id,
+                attachments=attachments,
             )
 
-        await add_message(
+        user_message = await add_message(
             session_id=request.session_id,
             user_id=user_id,
             role="user",
             content=request.query,
             parent_id=request.parent_id,
+        )
+        await link_attachments_to_message(
+            request.attachment_ids, request.session_id, user_message["id"]
         )
 
         async def stream_and_persist():
@@ -82,6 +95,7 @@ async def chat(request: ChatRequest):
             response_parent_id = request.parent_id
             stream_error: str | None = None
             trace_events: list[dict[str, Any]] = []
+            sources: list[dict[str, Any]] = []
 
             try:
                 async for payload in token_stream:
@@ -97,6 +111,8 @@ async def chat(request: ChatRequest):
                         stream_error = payload.get("message") or "生成失败"
                     elif payload.get("type") == "agent":
                         trace_events.append(payload)
+                    elif payload.get("type") == "sources":
+                        sources = list(payload.get("items") or [])
                     yield _encode_sse(payload)
             except LLMRateLimitError as exc:
                 stream_error = str(exc)
@@ -131,6 +147,7 @@ async def chat(request: ChatRequest):
                         parent_id=response_parent_id,
                         status="error" if stream_error else "complete",
                         agent_trace=trace_events,
+                        sources=sources,
                     )
                 except Exception:
                     logger.exception("保存会话历史失败: session_id=%s", request.session_id)
