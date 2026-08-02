@@ -47,7 +47,18 @@ export interface ChatSessionMessage {
   conversation_id?: string | null
   parent_id?: string | null
   status: 'complete' | 'error' | string
+  agent_trace?: AgentTraceEvent[]
   created_at: string
+}
+
+export interface AgentTraceEvent {
+  type: 'agent'
+  node: 'router' | 'planner' | 'agent_model' | 'tool_executor' | 'verifier' | 'memory_writer' | string
+  status: 'running' | 'completed' | 'failed'
+  title: string
+  summary: string
+  details?: Record<string, unknown>
+  timestamp?: string
 }
 
 export interface ChatSessionSummary {

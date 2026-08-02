@@ -1,6 +1,6 @@
 """Persistent chat session history API."""
 
-from typing import Literal
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -33,6 +33,7 @@ class SessionMessage(BaseModel):
     conversation_id: str | None = None
     parent_id: str | None = None
     status: str
+    agent_trace: list[dict[str, Any]] = Field(default_factory=list)
     created_at: str
 
 

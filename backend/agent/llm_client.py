@@ -10,6 +10,7 @@ import math
 import re
 import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
 from typing import Any
 
 from google import genai
@@ -235,6 +236,157 @@ class GeminiLLMClient:
                 raise rate_limit_error from exc
             raise RuntimeError(f"LLM API 调用失败: {exc}") from exc
 
+    async def acomplete_with_tools(
+        self,
+        *,
+        contents: list[types.Content],
+        system_instruction: str,
+        tool_declarations: list[types.FunctionDeclaration],
+        allow_tools: bool = True,
+    ) -> "GeminiFunctionResponse":
+        """调用 Gemini 原生 Function Calling，并保留模型返回的完整 Content。
+
+        工具只由模型选择，本方法不会自动执行任何 Python 函数。执行与结果回传由
+        LangGraph 的 Tool Executor 节点负责。
+        """
+        try:
+            await _REQUEST_GATE.acquire(self.model_name, self.min_request_interval_seconds)
+            mode = (
+                types.FunctionCallingConfigMode.AUTO
+                if allow_tools
+                else types.FunctionCallingConfigMode.NONE
+            )
+            config = types.GenerateContentConfig(
+                max_output_tokens=self.max_output_tokens,
+                system_instruction=system_instruction,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel(self.thinking_level.upper()),
+                    include_thoughts=False,
+                ),
+                tools=[types.Tool(function_declarations=tool_declarations)],
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(mode=mode)
+                ),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            )
+            response = await self.client.models.generate_content(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+            model_content = None
+            if response.candidates:
+                model_content = response.candidates[0].content
+            if model_content is None:
+                model_content = types.Content(
+                    role="model",
+                    parts=[types.Part(text=response.text or "")],
+                )
+
+            calls = [
+                GeminiFunctionCall(
+                    name=call.name or "",
+                    arguments=dict(call.args or {}),
+                    call_id=call.id or "",
+                )
+                for call in (response.function_calls or [])
+                if call.name
+            ]
+            return GeminiFunctionResponse(
+                text=response.text or "",
+                function_calls=calls,
+                model_content=model_content,
+            )
+        except LLMRateLimitError:
+            raise
+        except Exception as exc:
+            logger.error("Gemini Function Calling 失败: %s", exc, exc_info=True)
+            rate_limit_error = _rate_limit_error(exc)
+            if rate_limit_error:
+                if not rate_limit_error.daily_quota:
+                    _REQUEST_GATE.register_rate_limit(
+                        self.model_name, rate_limit_error.retry_after
+                    )
+                raise rate_limit_error from exc
+            raise RuntimeError("模型工具调用暂时不可用") from exc
+
+    async def astream_with_tools(
+        self,
+        *,
+        contents: list[types.Content],
+        system_instruction: str,
+        tool_declarations: list[types.FunctionDeclaration],
+        allow_tools: bool = True,
+    ) -> AsyncGenerator["GeminiFunctionChunk", None]:
+        """流式生成文本或 Function Call，同时保留每个模型 Content。"""
+        try:
+            await _REQUEST_GATE.acquire(self.model_name, self.min_request_interval_seconds)
+            mode = (
+                types.FunctionCallingConfigMode.AUTO
+                if allow_tools
+                else types.FunctionCallingConfigMode.NONE
+            )
+            config = types.GenerateContentConfig(
+                max_output_tokens=self.max_output_tokens,
+                system_instruction=system_instruction,
+                thinking_config=types.ThinkingConfig(
+                    thinking_level=types.ThinkingLevel(self.thinking_level.upper()),
+                    include_thoughts=False,
+                ),
+                tools=[types.Tool(function_declarations=tool_declarations)],
+                tool_config=types.ToolConfig(
+                    function_calling_config=types.FunctionCallingConfig(
+                        mode=mode,
+                    )
+                ),
+                automatic_function_calling=types.AutomaticFunctionCallingConfig(
+                    disable=True
+                ),
+            )
+            stream = await self.client.models.generate_content_stream(
+                model=self.model_name,
+                contents=contents,
+                config=config,
+            )
+            async for response in stream:
+                model_content = None
+                if response.candidates:
+                    model_content = response.candidates[0].content
+                calls = [
+                    GeminiFunctionCall(
+                        name=call.name or "",
+                        arguments=dict(call.args or {}),
+                        call_id=call.id or "",
+                    )
+                    for call in (response.function_calls or [])
+                    if call.name
+                ]
+                text = response.text or ""
+                if model_content is None and text:
+                    model_content = types.Content(
+                        role="model", parts=[types.Part(text=text)]
+                    )
+                if model_content is not None or text or calls:
+                    yield GeminiFunctionChunk(
+                        text=text,
+                        function_calls=calls,
+                        model_content=model_content,
+                    )
+        except LLMRateLimitError:
+            raise
+        except Exception as exc:
+            logger.error("Gemini 流式 Function Calling 失败: %s", exc, exc_info=True)
+            rate_limit_error = _rate_limit_error(exc)
+            if rate_limit_error:
+                if not rate_limit_error.daily_quota:
+                    _REQUEST_GATE.register_rate_limit(
+                        self.model_name, rate_limit_error.retry_after
+                    )
+                raise rate_limit_error from exc
+            raise RuntimeError("模型工具调用暂时不可用") from exc
+
     async def close(self) -> None:
         """关闭底层 HTTP 客户端。"""
         await self.client.aclose()
@@ -248,3 +400,24 @@ class LLMResponse:
 
     def __str__(self) -> str:
         return self.text
+
+
+@dataclass(frozen=True)
+class GeminiFunctionCall:
+    name: str
+    arguments: dict[str, Any]
+    call_id: str = ""
+
+
+@dataclass(frozen=True)
+class GeminiFunctionResponse:
+    text: str
+    function_calls: list[GeminiFunctionCall]
+    model_content: types.Content
+
+
+@dataclass(frozen=True)
+class GeminiFunctionChunk:
+    text: str
+    function_calls: list[GeminiFunctionCall]
+    model_content: types.Content | None

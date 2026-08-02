@@ -3,10 +3,12 @@
 """
 import json
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 
+from backend.agent.llm_client import LLMRateLimitError
 from backend.agent.orchestrator import AgentOrchestrator
 from backend.api.schemas.request import ChatRequest
 from backend.api.schemas.response import DialogueNodeBase
@@ -55,6 +57,7 @@ async def chat(request: ChatRequest):
                 fragment_id=request.ref_fragment_id,
                 query=request.query,
                 selected_text=request.selected_text,
+                session_id=request.session_id,
             )
         else:
             logger.info("处理普通提问（流式）...")
@@ -78,10 +81,10 @@ async def chat(request: ChatRequest):
             conversation_id: str | None = None
             response_parent_id = request.parent_id
             stream_error: str | None = None
+            trace_events: list[dict[str, Any]] = []
 
-            async for event_line in token_stream:
-                try:
-                    payload = json.loads(event_line)
+            try:
+                async for payload in token_stream:
                     if payload.get("conversation_id"):
                         conversation_id = payload["conversation_id"]
                     if payload.get("parent_id") is not None:
@@ -92,9 +95,26 @@ async def chat(request: ChatRequest):
                         answer_parts = [payload["answer"]]
                     elif payload.get("type") == "error":
                         stream_error = payload.get("message") or "生成失败"
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning("无法解析待持久化的流事件: %r", event_line[:200])
-                yield event_line
+                    elif payload.get("type") == "agent":
+                        trace_events.append(payload)
+                    yield _encode_sse(payload)
+            except LLMRateLimitError as exc:
+                stream_error = str(exc)
+                payload = {
+                    "type": "error",
+                    "code": exc.code,
+                    "message": str(exc),
+                    "retry_after": exc.retry_after,
+                }
+                yield _encode_sse(payload)
+                yield _encode_sse({"type": "end"})
+            except Exception:
+                logger.exception("LangGraph Agent 执行失败")
+                stream_error = "Agent 运行时暂时不可用，请稍后重试。"
+                yield _encode_sse(
+                    {"type": "error", "code": "agent_error", "message": stream_error}
+                )
+                yield _encode_sse({"type": "end"})
 
             content = "".join(answer_parts).strip()
             if not content and stream_error:
@@ -110,11 +130,20 @@ async def chat(request: ChatRequest):
                         conversation_id=conversation_id,
                         parent_id=response_parent_id,
                         status="error" if stream_error else "complete",
+                        agent_trace=trace_events,
                     )
                 except Exception:
                     logger.exception("保存会话历史失败: session_id=%s", request.session_id)
 
-        return StreamingResponse(stream_and_persist(), media_type="application/x-ndjson")
+        return StreamingResponse(
+            stream_and_persist(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -123,6 +152,11 @@ async def chat(request: ChatRequest):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"处理请求时出错: {str(e)}",
         ) from e
+
+
+def _encode_sse(payload: dict[str, Any]) -> str:
+    """按照 SSE 协议编码单个 JSON 事件。"""
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
 
 @router.get("/conversation/{conversation_id}", response_model=DialogueNodeBase)

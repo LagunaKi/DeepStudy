@@ -32,12 +32,12 @@ DeepStudy 不再定位为普通问答机器人，而是：
 - 缺少可新建、切换、重命名和删除的持久化会话历史，刷新页面后当前学习上下文丢失。
 - 聊天输入不支持图片和文件附件，已有上传接口也没有接入对话与 Agent 状态。
 - 右侧图谱同时混合对话节点和概念节点，信息层级不清晰，默认视图不符合学习者的思维导图心智模型。
-- 意图路由当前固定返回 `concept`，没有真实路由能力。
+- 阶段 0 时意图路由固定返回 `concept`；阶段 1 已改为本地真实路由。
 - RAG 仅有独立上传和搜索接口，没有进入聊天主链路。
 - Neo4j 当前主要保存对话树，还不是带来源和领域关系的知识图谱。
 - 当前编排是固定 Python 调用顺序，不是模型驱动的 Tool Calling 循环。
 - Memory 主要表现为学习画像，缺少短期、语义和情景记忆的明确分层。
-- 缺少 Agent Trace、离线评测和可量化指标。
+- Agent Trace 已在阶段 1 完成；离线评测和可量化指标仍待补齐。
 - 构建、测试、安全配置和一键启动尚未达到作品集标准。
 
 ## 3. 目标架构
@@ -268,14 +268,14 @@ MCP 用于向外部 Agent Host 暴露 DeepStudy 的工具和上下文；它不�
 
 - [x] 增加 SQLite 会话与消息模型，支持新建、切换、重命名、删除和刷新恢复。
 - [x] 前端改为统一的 `ChatTurn` 状态，不再用用户消息/回答两个平行数组。
-- [ ] 引入 LangGraph `AgentState`。
-- [ ] 实现 Router、Planner、Tool Executor、Verifier。
-- [ ] 使用 Gemini Function Calling，并建立可替换的模型 Provider 接口。
-- [ ] 通过 SSE 输出 Agent 事件。
-- [ ] 增加 Agent Trace 展示。
+- [x] 引入 LangGraph `AgentState`。
+- [x] 实现 Router、Planner、Tool Executor、Verifier 与 Memory Writer。
+- [x] 使用 Gemini Function Calling，并建立可替换的模型 Provider 接口。
+- [x] 通过标准 SSE 输出 Agent 事件。
+- [x] 增加可持久化 Agent Trace 展示。
 - [x] 建立附件元数据与消息关联，为多模态和 RAG 摄取提供统一入口。
 - [x] 右侧默认切换为层级清晰的学习思维导图。
-- [ ] 增加学习思维导图 / 知识图谱高级视图切换入口。
+- [x] 增加学习思维导图 / 知识关系图视图切换入口。
 
 验收标准：
 

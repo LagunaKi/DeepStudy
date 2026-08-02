@@ -1,10 +1,11 @@
 # DeepStudy 后端
 
-FastAPI + Gemini 3 Flash，负责流式对话、知识图谱写入、学习画像与概念归一化。
+FastAPI + LangGraph + Gemini 3 Flash，负责 Agent 编排、Function Calling、SSE、知识图谱写入与学习画像。
 
 ## 技术栈
 
 - **框架**: FastAPI
+- **Agent Runtime**: LangGraph 1.2（显式 `AgentState`）
 - **LLM**: Google Gen AI SDK（`agent/llm_client.py`）
 - **模型**: Gemini 3 Flash 免费 API 层（主模型与代码模型可配置）
 - **存储**: Neo4j（对话与图谱）、SQLite（用户表、概念画像、对话–概念关联）
@@ -22,7 +23,11 @@ backend/
 │   │   └── knowledge.py   # 知识相关（若有）
 │   └── schemas/           # 请求/响应模型
 ├── agent/
-│   ├── orchestrator.py    # 流式编排、首轮/递归后处理
+│   ├── orchestrator.py    # FastAPI 到 LangGraph 的兼容外壳
+│   ├── graph.py           # Router/Planner/Agent/Tool/Verifier/Memory 状态图
+│   ├── state.py           # AgentState 与 Trace 协议
+│   ├── tools.py           # Pydantic 工具注册表与执行器
+│   ├── model_provider.py  # 可替换模型 Provider
 │   ├── concept_extractor.py   # 不额外调用 LLM 的学习地图概念提取
 │   ├── intent_router.py   # 意图识别（concept/code/derivation）
 │   ├── activity_classifier.py  # 学习活动分类（explain/derive/...）
@@ -60,8 +65,7 @@ API 文档：http://localhost:8000/docs
 
 ## 核心流程
 
-- **首轮提问**：意图识别 → 策略生成回答 → 流式返回；后处理：本地提取 root + children 与学习活动 → 更新画像与 `conversation_concepts` → 写入 Neo4j。
-- **划词追问**：带 `parent_id` 的流式对话；后处理同样使用本地规则更新学习地图和画像，不额外消耗 Gemini 免费请求。
+`Router → Planner → Gemini Function Calling → Tool Executor（按需）→ Verifier → Memory Writer`。普通问答只请求模型一次；使用工具时将本地结果回传模型再生成回答。
 
 ## API 概览
 
@@ -69,7 +73,7 @@ API 文档：http://localhost:8000/docs
 
 - **POST /api/chat**  
   Body: `query`, `parent_id?`, `ref_fragment_id?`, `selected_text?`, `session_id`  
-  流式：`type: meta | delta | full | end`，含 `conversation_id`、`parent_id`、`text` 等。
+  标准 SSE：`type: meta | agent | delta | error | end`。`agent` 包含可安全展示的节点摘要，Trace 会随历史消息持久化。
 
 ### 思维导图
 
@@ -100,15 +104,14 @@ API 文档：http://localhost:8000/docs
 - 节点：`DialogueNode`，属性含 `node_id`, `user_id`, `role`, `content`, `intent`, `mastery_score`, `title`, `type`。
 - 关系：`(parent)-[:HAS_CHILD]->(child)`，用于对话树与祖先链查询（`get_ancestor_node_ids`）。
 
-## Prompt 管理
+## Agent Tools
 
-所有 Agent 用到的 Prompt 均在 `backend/agent/prompts/system_prompts.py`：
+- `calculate_expression`
+- `get_learning_profile`
+- `query_concept_graph`
+- `search_course_materials`
 
-- `RECURSIVE_PROMPT`、`RECURSIVE_ANSWER_WITH_SELECTION`、`RECURSIVE_ANSWER_WITH_CONTEXT`、`RECURSIVE_ANSWER_QUERY_ONLY`
-- `CONCEPT_EXTRACTION_FIRST_TURN`、`CONCEPT_EXTRACTION_RECURSIVE`
-- `DERIVATION_PROMPT`、`CODE_PROMPT`、`CONCEPT_PROMPT`、`KNOWLEDGE_EXTRACTION_PROMPT`
-
-编排器只做格式化（如填入 `query`、`full_answer`、`ancestor_hint`），不内联长字符串。
+工具输入由 Pydantic 校验，执行器记录参数、状态、耗时和结果摘要。
 
 ## 环境变量
 

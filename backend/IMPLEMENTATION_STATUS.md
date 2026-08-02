@@ -1,162 +1,119 @@
-# 实现状态报告
+# DeepStudy 实现状态报告
 
-本文档记录 DeepStudy 后端当前实现状态、缺省实现与已知限制。
+本文档按当前代码记录已落地能力与边界，避免把路线图功能误写成已完成。
 
-## 当前实现状态
+## 当前架构
 
-### 已完成功能
+```text
+React + TypeScript
+  -> FastAPI / Server-Sent Events
+  -> LangGraph Agent Runtime
+  -> Gemini 3 Flash Function Calling
+  -> SQLite / Neo4j / Agent Tools
+```
 
-1. **对话与流式输出**
-   - `POST /api/chat`：支持首轮提问与划词追问，统一流式返回（`meta` / `delta` / `full` / `end`）
-   - 首轮：意图识别 → 策略生成 → 流式输出；后处理做本地概念提取、画像更新、Neo4j 写入
-   - 划词追问：带 `parent_id`、`ref_fragment_id`、`selected_text`；从 Neo4j 取父节点内容作上下文，流式生成后做本地概念提取与画像更新
+FastAPI 是 API 层，LangGraph 是 FastAPI 内部的 Agent 编排运行时，两者不是替代关系。原 `AgentOrchestrator` 现在保留为兼容外壳，实际主流程委托给 `DeepStudyAgentGraph`。
 
-2. **思维导图**
-   - `GET /api/mindmap/{conversation_id}`：从 Neo4j 查对话树，融合学习画像（U/R/A、score、times），返回 `MindMapGraph`（nodes/edges）
-   - 数据来源：DialogueNode + HAS_CHILD / HAS_KEYWORD，按会话根节点展开
+## 阶段 1 已完成
 
-3. **学习画像**
-   - SQLite：`concept_profiles`（concept_key, user_id, u, r, a, times, last_practice）、`conversation_concepts`（conversation_id, concept_key, user_id）
-   - `GET /api/profile/summary`：当前用户概念列表（按得分排序）
-   - `GET /api/profile/weak?limit=`：薄弱概念（按 U 升序）
-   - `DELETE /api/profile/concepts`（Body: `{ "concept": "..." }`）：仅删 `concept_profiles`，保留 `conversation_concepts`
-   - `GET /api/profile/graph`：画像图结构（节点列表）
+### LangGraph 主链路
 
-4. **学习计划**
-   - SQLite：`learning_plan`（user_id, concept_key），用户手动维护的概念列表，多设备/刷新同步
-   - `GET /api/profile/plan`：返回学习计划概念名列表
-   - `POST /api/profile/plan`（Body: `{ "concept": "..." }`）：将概念加入计划
-   - `DELETE /api/profile/plan`（Body: `{ "concept": "..." }`）：从计划移除
-   - 前端：学习画像弹层左右双栏（左侧概念列表、右侧学习计划），支持拖拽入计划与「加入计划」「移出计划」；知识图谱接收 `planConcepts`，计划内概念节点以淡绿色卡片背景显示
+已定义显式 `AgentState`，主要字段包括：
 
-5. **概念提取与归一化**
-   - 首轮和划词追问：从问题与 Markdown 回答中本地提取 root + children，写入画像并记录到 `conversation_concepts`
-   - 归一化：词法规范化 + `profile_aliases.json` 别名字典 + 可选 Embedding 相似度合并
+- `messages`
+- `user_profile`
+- `task_plan`
+- `recommended_tools`
+- `pending_tool_calls`
+- `tool_calls`
+- `retrieved_evidence`
+- `answer`
+- `verification_result`
+- `memory_updates`
 
-6. **Neo4j 集成**
-   - `save_dialogue_node`、`link_dialogue_nodes`（HAS_CHILD，可选 fragment_id）
-   - `get_dialogue_node(node_id)`：单节点
-   - `get_dialogue_tree(root_node_id, user_id, max_depth)`：会话子图
-   - `get_ancestor_node_ids(node_id, max_depth)`：沿 HAS_CHILD 入边取祖先 node_id 列表
+状态图节点为：
 
-7. **Prompt 管理**
-   - 所有 Agent 用到的 Prompt 统一在 `backend/agent/prompts/system_prompts.py`（首轮/递归回答、各策略与知识提取模板）
+```text
+START
+  -> Router
+  -> Planner
+  -> Agent Model
+  -> Tool Executor（按需）
+  -> Agent Model（带工具结果）
+  -> Verifier
+  -> Memory Writer
+  -> END
+```
 
-8. **API 路由**
-   - `/api/chat`（流式）、`/api/chat/conversation/{conversation_id}`（对话树）
-   - `/api/mindmap/{conversation_id}`（思维导图）
-   - `/api/profile/summary`、`/api/profile/weak`、`/api/profile/concepts`（DELETE）、`/api/profile/plan`（GET/POST/DELETE）、`/api/profile/graph`
+Router 使用本地确定性规则区分 `concept`、`derivation`、`code`，不再固定返回 `CONCEPT`，也不会为路由额外消耗免费模型额度。Planner 生成可展示的步骤摘要和建议工具。Verifier 当前是确定性完整性与工具结果检查，不额外调用 LLM。
 
-9. **认证与用户**
-   - 当前单用户：`user_id = "anonymous"`，未使用 JWT；auth 路由与 users 表预留
+### Gemini Function Calling
 
----
+主模型通过可替换的 `AgentModelProvider` 协议接入。当前实现是 `GeminiModelProvider`，使用 Google Gen AI SDK 的原生 Function Calling，关闭 SDK 自动执行函数，由 LangGraph Tool Executor 负责：
 
-## 缺省或简化实现
+1. 将 Pydantic 工具 Schema 发送给 Gemini。
+2. 接收模型选择的函数名与结构化参数。
+3. 在本地工具注册表执行并记录耗时、状态和摘要。
+4. 将函数结果作为 `FunctionResponse` 回传 Gemini。
+5. Gemini 基于结果生成用户可读回答。
 
-### 1. 意图识别
+普通问题没有工具调用时只请求模型一次；需要工具时通常请求两次。正文与 Function Calling 均使用 Gemini 流式接口。每轮最多执行一轮并行工具调用，避免免费额度被无界循环消耗。
 
-**位置**：`backend/agent/intent_router.py`
+已注册工具：
 
-**当前实现**：`route(query)` 固定返回 `IntentType.CONCEPT`，未调用 LLM。
+- `calculate_expression`：白名单 AST 计算器，不使用 `eval`。
+- `get_learning_profile`：读取 SQLite 学习画像。
+- `query_concept_graph`：查询 Neo4j 概念关系。
+- `search_course_materials`：检索已有课程资料索引；索引为空时明确降级。
 
-**影响**：所有请求走 ConceptStrategy，CodeStrategy、DerivationStrategy 仅在有其他入口时才会用到。
+### SSE 与 Agent Trace
 
-**预留**：Few-shot 示例已写在 `_get_few_shot_examples()`，可改为真实 LLM 调用。
+`POST /api/chat` 返回标准 `text/event-stream`，事件包括：
 
-### 2. 知识三元组提取
+- `meta`
+- `agent`
+- `delta`
+- `error`
+- `end`
 
-**位置**：`backend/agent/extractors/knowledge_extractor.py`（规则正则）、`orchestrator.py` 中首轮后处理仍会调用
+`agent` 事件展示 Router、Planner、Agent Model、Tool Executor、Verifier、Memory Writer 的安全摘要，不展示模型私有 Chain-of-Thought。Trace 随 assistant 消息写入 SQLite 的 `agent_trace` 字段，刷新和切换历史会话后仍可查看。
 
-**当前实现**：规则抽取（主谓宾模式），首轮后处理会执行但三元组主要用于日志/预留；首轮概念来自 LLM 提炼（root+children），不是三元组 subject/object。划词追问概念完全由 LLM 提炼，不再用三元组。
+### 会话与前端
 
-**影响**：知识图谱结构来自对话树与概念节点（Neo4j DialogueNode + HAS_KEYWORD 等），不是独立的三元组存储。
+- SQLite 持久化会话、消息、附件元数据和 Agent Trace。
+- 支持新建、切换、重命名、删除和刷新恢复。
+- 前端使用统一 `ChatTurn`，每轮绑定 user、assistant、status 与 trace。
+- 右侧默认是树状学习思维导图，并提供“思维导图 / 关系图”布局切换。
+- 区分临时 429、每日免费额度耗尽与 Agent 运行错误。
 
-### 3. 文本片段（fragments）
+### Memory Writer
 
-**位置**：策略返回的 `AgentResponse.fragments`
+Memory Writer 已作为 LangGraph 一等节点存在，当前写入范围是：
 
-**当前实现**：策略可返回空列表；前端划词时由用户选中文本，请求中带 `ref_fragment_id` 与 `selected_text`，不依赖后端片段解析。
+- SQLite U/R/A 学习画像与对话概念记录。
+- Neo4j 对话、根概念与子概念学习地图。
 
-**影响**：追问上下文依赖 Neo4j 父节点 content 与前端传入的 selected_text，不依赖后端对代码/公式片段的自动切分。
+这属于阶段 1 的结构化学习记忆，不等同于阶段 3 的完整分层长期 Memory。跨会话语义记忆、情景记忆、记忆查看/遗忘与持久化 Checkpoint 尚未完成。
 
-### 4. 学习诊断报告
+## 当前仍未完成
 
-**位置**：未实现
+- 阶段 2：图片/PDF/Markdown/TXT 上传接入聊天、结构化切片、混合检索、rerank、回答引用和来源可追溯 GraphRAG。
+- 阶段 3：LangGraph 持久化 Checkpoint 与中断恢复、完整分层 Memory、Skills 运行时、DeepStudy MCP Server。
+- 多用户认证：当前仍使用 `anonymous`。
+- 完整知识图谱高级视图：当前“关系图”是同一学习子图的不同布局；领域 KG Schema 与来源边在阶段 2 实现。
+- Verifier 目前不做 LLM 事实核查或引用一致性判断；阶段 2 有真实证据后再扩展。
 
-**预留**：无 `/api/chat/diagnosis` 或 `/api/profile/diagnosis`；薄弱概念已有 `/api/profile/weak`，无成文诊断报告生成。
+## 测试状态
 
----
+- 后端 pytest：20 条测试通过。
+- 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
+- 前端 ESLint 与 TypeScript/Vite production build 通过。
+- LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。
 
-## 预留或未实现接口
+## 面试口径
 
-### Data Layer
+可以说：
 
-- **`get_dialogue_context_path(root_node_id, target_node_id)`**：未实现；当前划词追问仅用 `get_dialogue_node(parent_id)` 取父节点内容，以及 `get_ancestor_node_ids` 取祖先 id 用于查 `conversation_concepts`。
-- **独立知识三元组存储**：未在 Neo4j 中单独存 subject-relation-object；图谱由对话树与概念节点构成。
+> 我用 LangGraph 把原来的线性 Orchestrator 重构成显式 Planner–Executor–Verifier 状态图，通过 Gemini 原生 Function Calling 连接计算器、学习画像、Neo4j 和课程检索工具，并用 SSE 将 Router、Planner、Tool、Verifier、Memory Writer 的安全执行摘要实时展示和持久化。
 
-### Agent Layer
-
-- **IntentRouter.route()**：缺省返回 CONCEPT，可改为 LLM Few-shot。
-- **策略返回的 fragments**：可为空，若需“可点击片段”可在此扩展。
-
-### API Layer
-
-- **`/api/chat/diagnosis` 或 `/api/profile/diagnosis`**：学习诊断报告接口未实现。
-
----
-
-## 已知限制
-
-### 1. 意图识别固定为 CONCEPT
-
-所有请求均按概念型处理，推导型/代码型未通过意图路由区分。若需按题型分流，需实现 `IntentRouter.route()` 的 LLM 调用。
-
-### 2. 本地概念提取存在启发式限制
-
-概念来自问题、Markdown 标题和加粗术语。它不占用模型额度且结果稳定，但回答格式不规范时可能遗漏子概念，后续可由结构化 Agent 输出替换。
-
-### 3. 对话树查询规模
-
-`get_dialogue_tree` 与 `get_ancestor_node_ids` 均有 `max_depth` 限制（如 6）；会话极深时可能只覆盖部分结构，可按需调整或做分页。
-
-### 4. Neo4j 不可用时的降级
-
-后处理中 Neo4j 写入失败会打日志并降级（如只写 SQLite 画像、不写对话节点）；流式响应已返回，但图谱与对话树会不完整。无“仅 SQLite”的完整降级路径。
-
-### 5. 单用户与认证
-
-当前全局使用 `anonymous`，无多用户隔离；JWT 与 auth 路由存在但未接入主流程。
-
----
-
-## 后续扩展建议
-
-### 短期
-
-- 实现真正的意图识别（IntentRouter 调用 LLM），按意图走 Code/Derivation 策略。
-- 可选：首轮也做三元组抽取并写入 Neo4j（与现有概念节点并存），用于更细粒度图谱。
-
-### 中期
-
-- 学习诊断报告：基于 profile + 对话树生成简要诊断文案，并增加 `/api/profile/diagnosis` 或类似接口。
-- 多用户：接入 JWT，user_id 从 token 解析，画像与 conversation_concepts 按 user_id 隔离。
-
-### 长期
-
-- 向量检索：对话或概念向量化，支持语义检索与相似问题推荐。
-- 测试与文档：关键路径单测、API 示例与错误码说明。
-
----
-
-## 技术债务
-
-- 策略类间存在重复模式，可抽公共基类或工具函数。
-- 错误响应格式可统一（如统一错误码与 message 结构）。
-- 无自动化测试；关键逻辑（如概念归一化、祖先链查询）适合加单测。
-
----
-
-## 总结
-
-当前后端已实现：流式对话（首轮 + 划词追问）、基于 Neo4j 的对话树与思维导图、基于 SQLite 的学习画像与学习计划，以及不额外消耗 Gemini 请求的本地概念提取与活动分类。阶段 0 已切换到 Gemini 3 Flash 免费 API 层，并加入请求节流、每日额度识别、安全错误提示和测试基线。缺省或未实现部分主要为：真实意图识别、独立知识三元组存储、学习诊断报告接口、多用户认证接入。已知限制集中在意图单一、本地概念提取的启发式误差、Neo4j 降级与单用户假设。
+暂时不要说“完整 GraphRAG、完整分层 Memory、Skills 和 MCP 已经完成”，这些属于后续阶段。

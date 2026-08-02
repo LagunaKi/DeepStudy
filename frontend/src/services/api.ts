@@ -11,6 +11,7 @@ import {
   ConceptProfileSummary,
   ChatSessionDetail,
   ChatSessionSummary,
+  AgentTraceEvent,
 } from '../types/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -24,6 +25,13 @@ export interface ChatStreamEvent {
   conversation_id?: string
   parent_id?: string
   answer?: string
+  runtime?: string
+  node?: AgentTraceEvent['node']
+  status?: AgentTraceEvent['status']
+  title?: string
+  summary?: string
+  details?: Record<string, unknown>
+  timestamp?: string
 }
 
 /**
@@ -82,23 +90,28 @@ export const chatAPI = {
       buffer += decoder.decode(value, { stream: true })
 
       let index: number
-      // 按行拆分 JSON（后端以 \n 作为分隔符）
-      while ((index = buffer.indexOf('\n')) >= 0) {
-        const line = buffer.slice(0, index).trim()
-        buffer = buffer.slice(index + 1)
-        if (!line) continue
+      // SSE 事件以空行分隔；data 字段内承载 JSON。
+      while ((index = buffer.indexOf('\n\n')) >= 0) {
+        const block = buffer.slice(0, index).trim()
+        buffer = buffer.slice(index + 2)
+        if (!block) continue
         try {
-          const payload = JSON.parse(line)
+          const data = block
+            .split('\n')
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trimStart())
+            .join('\n')
+          if (!data) continue
+          const payload = JSON.parse(data)
           onChunk(payload)
         } catch (e) {
-          // 忽略单行解析错误，避免中断整个流
-          console.warn('解析流式数据失败:', e, line)
+          console.warn('解析 SSE 事件失败:', e, block)
         }
       }
     }
 
     // 处理最后残留的 buffer
-    const rest = buffer.trim()
+    const rest = buffer.trim().replace(/^data:\s*/, '')
     if (rest) {
       try {
         const payload = JSON.parse(rest)

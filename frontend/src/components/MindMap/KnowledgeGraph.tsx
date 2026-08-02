@@ -20,6 +20,7 @@ interface KnowledgeGraphProps {
   data: MindMapGraph
   planConcepts?: string[]
   onNodeClick?: (nodeId: string) => void
+  viewMode?: 'mindmap' | 'graph'
 }
 
 const NODE_WIDTH = 184
@@ -39,11 +40,12 @@ const cleanLabel = (text: string): string => {
 const layoutMindMap = (
   graph: MindMapGraph,
   planConcepts: string[],
+  viewMode: 'mindmap' | 'graph',
 ): { nodes: Node[]; edges: Edge[] } => {
   const dagreGraph = new dagre.graphlib.Graph()
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
-    rankdir: 'LR',
+    rankdir: viewMode === 'mindmap' ? 'LR' : 'TB',
     align: 'UL',
     nodesep: 34,
     ranksep: 72,
@@ -71,8 +73,8 @@ const layoutMindMap = (
         x: position.x - NODE_WIDTH / 2,
         y: position.y - NODE_HEIGHT / 2,
       },
-      sourcePosition: Position.Right,
-      targetPosition: Position.Left,
+      sourcePosition: viewMode === 'mindmap' ? Position.Right : Position.Bottom,
+      targetPosition: viewMode === 'mindmap' ? Position.Left : Position.Top,
       data: {
         ...node.data,
         label,
@@ -86,7 +88,7 @@ const layoutMindMap = (
     id: edge.id || `${edge.source}-${edge.target}`,
     source: edge.source,
     target: edge.target,
-    type: 'smoothstep',
+    type: viewMode === 'mindmap' ? 'smoothstep' : 'default',
     markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color: '#94a3b8' },
     style: { stroke: '#94a3b8', strokeWidth: 1.4 },
   }))
@@ -94,12 +96,17 @@ const layoutMindMap = (
   return { nodes, edges }
 }
 
-const LearningMapCanvas = ({ data, planConcepts = [], onNodeClick }: KnowledgeGraphProps) => {
+const LearningMapCanvas = ({
+  data,
+  planConcepts = [],
+  onNodeClick,
+  viewMode = 'mindmap',
+}: KnowledgeGraphProps) => {
   const { fitView } = useReactFlow()
   const nodeTypes = useMemo(() => ({ custom: CustomNode }), [])
   const layout = useMemo(
-    () => layoutMindMap(data, planConcepts),
-    [data, planConcepts],
+    () => layoutMindMap(data, planConcepts, viewMode),
+    [data, planConcepts, viewMode],
   )
 
   useEffect(() => {

@@ -32,6 +32,15 @@ def test_session_crud_and_message_history(tmp_path, monkeypatch) -> None:
             role="assistant",
             content="RAG 会先检索证据，再生成答案。",
             conversation_id="conversation-1",
+            agent_trace=[
+                {
+                    "type": "agent",
+                    "node": "router",
+                    "status": "completed",
+                    "title": "Router",
+                    "summary": "概念讲解",
+                }
+            ],
         )
 
         detail = await get_session(session_id, "anonymous")
@@ -42,6 +51,7 @@ def test_session_crud_and_message_history(tmp_path, monkeypatch) -> None:
             "assistant",
         ]
         assert detail["messages"][1]["conversation_id"] == "conversation-1"
+        assert detail["messages"][1]["agent_trace"][0]["node"] == "router"
 
         sessions = await list_sessions("anonymous")
         assert sessions[0]["message_count"] == 2

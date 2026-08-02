@@ -9,6 +9,7 @@ import {
 } from '../../services/api'
 import {
   AgentResponse,
+  AgentTraceEvent,
   ChatSessionDetail,
   ChatSessionSummary,
   ConceptProfileSummary,
@@ -19,12 +20,14 @@ import {
 import TextFragment from '../Markdown/TextFragment'
 import KnowledgeGraph from '../MindMap/KnowledgeGraph'
 import ConversationSidebar from './ConversationSidebar'
+import AgentTrace from './AgentTrace'
 
 interface ChatTurn {
   id: string
   user: string
   assistant: AgentResponse
   status: 'loading' | 'complete' | 'error'
+  trace: AgentTraceEvent[]
 }
 
 const emptyAssistant = (parentId: string | null = null): AgentResponse => ({
@@ -45,6 +48,7 @@ const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
         user: message.content,
         assistant: emptyAssistant(message.parent_id || null),
         status: 'complete',
+        trace: [],
       })
       return
     }
@@ -57,6 +61,7 @@ const detailToTurns = (detail: ChatSessionDetail): ChatTurn[] => {
       conversation_id: message.conversation_id || '',
     }
     target.status = message.status === 'error' ? 'error' : 'complete'
+    target.trace = message.agent_trace || []
   })
   return turns
 }
@@ -78,6 +83,7 @@ const ChatInterface = () => {
   const [quotaExhausted, setQuotaExhausted] = useState(false)
   
   const [sidebarOpen, setSidebarOpen] = useState<boolean>(true)
+  const [mapView, setMapView] = useState<'mindmap' | 'graph'>('mindmap')
   const [sidebarWidth, setSidebarWidth] = useState<number>(400)
   const [isResizing, setIsResizing] = useState<boolean>(false)
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([])
@@ -394,6 +400,7 @@ const ChatInterface = () => {
         user: query,
         assistant: emptyAssistant(parentId),
         status: 'loading',
+        trace: [],
       },
     ])
 
@@ -430,6 +437,9 @@ const ChatInterface = () => {
                 conversation_id: payload.conversation_id as string,
               },
             }))
+          } else if (payload.type === 'agent' && payload.node && payload.status && payload.title && payload.summary) {
+            const event = payload as AgentTraceEvent
+            updateTurn((turn) => ({ ...turn, trace: [...turn.trace, event] }))
           } else if (payload.type === 'delta' && payload.text) {
             setHasFirstChunk(true)
             updateTurn((turn) => ({
@@ -800,6 +810,10 @@ const ChatInterface = () => {
               </div>
               <div style={aiMessageStyle}>
                 <div style={aiCardStyle}>
+                  <AgentTrace
+                    events={turn.trace}
+                    active={turn.status === 'loading' && loading && index === turns.length - 1}
+                  />
                   {turn.assistant.answer ? (
                       <TextFragment
                         content={turn.assistant.answer}
@@ -943,9 +957,31 @@ const ChatInterface = () => {
             justifyContent: 'space-between',
             alignItems: 'center',
           }}>
-            <h3 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#111827' }}>
-              学习思维导图
-            </h3>
+            <div>
+              <h3 style={{ fontSize: '18px', fontWeight: 600, margin: 0, color: '#111827' }}>
+                {mapView === 'mindmap' ? '学习思维导图' : '知识关系图'}
+              </h3>
+              <div style={{ display: 'flex', gap: '4px', marginTop: '8px' }}>
+                {(['mindmap', 'graph'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    onClick={() => setMapView(mode)}
+                    style={{
+                      padding: '4px 8px',
+                      border: '1px solid #D1D5DB',
+                      borderRadius: '6px',
+                      background: mapView === mode ? '#DBEAFE' : 'white',
+                      color: mapView === mode ? '#1D4ED8' : '#64748B',
+                      cursor: 'pointer',
+                      fontSize: '11px',
+                    }}
+                  >
+                    {mode === 'mindmap' ? '思维导图' : '关系图'}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={() => setSidebarOpen(false)}
               style={{
@@ -963,7 +999,11 @@ const ChatInterface = () => {
             </button>
           </div>
           <div style={{ flex: 1, padding: '16px', overflow: 'hidden' }}>
-            <KnowledgeGraph data={mindMapData} planConcepts={planList} />
+            <KnowledgeGraph
+              data={mindMapData}
+              planConcepts={planList}
+              viewMode={mapView}
+            />
           </div>
         </div>
       )}

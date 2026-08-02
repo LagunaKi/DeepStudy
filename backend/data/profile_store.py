@@ -18,7 +18,6 @@ from typing import Dict, List, Optional, Tuple
 
 from backend.config import settings
 from backend.data.sqlite_db import get_db_connection
-from backend.data.vector_store import load_embedding_model_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -186,6 +185,8 @@ class ConceptNormalizer:
         if self._embed_model is not None:
             return
         try:
+            from backend.data.vector_store import load_embedding_model_with_retry
+
             self._embed_model = load_embedding_model_with_retry(
                 max_retries=1,
                 retry_delay=5,
@@ -663,4 +664,3 @@ async def apply_learning_event_to_concepts(
         )
 
     return vec
-

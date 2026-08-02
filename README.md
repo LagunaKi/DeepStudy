@@ -1,6 +1,6 @@
 # DeepStudy
 
-基于 Gemini 3 Flash 的递归学习 Agent：支持首轮/划词追问、知识图谱与学习画像。
+基于 LangGraph 与 Gemini 3 Flash 的递归学习 Agent：支持 Function Calling、Agent Trace、知识图谱与学习画像。
 
 > 当前正在从黑客松 Demo 升级为基于 LangGraph、GraphRAG 与分层记忆的
 > 自适应学习 Agent。完整方案见
@@ -9,7 +9,7 @@
 ## 技术栈
 
 - **前端**: React + TypeScript + ReactFlow + Vite
-- **后端**: FastAPI + Python
+- **后端**: FastAPI + LangGraph + Python
 - **模型**: Gemini 3 Flash（Gemini Developer API 免费层）
 - **数据库**: Neo4j（对话与知识图谱）+ SQLite（用户数据与学习画像）
 - **认证**: 当前单用户场景（anonymous），JWT 预留
@@ -26,7 +26,7 @@ DeepStudy/
 │   └── README.md
 ├── backend/               # FastAPI 后端
 │   ├── api/               # 路由与 schemas
-│   ├── agent/             # 编排、意图、策略、提取器、prompts
+│   ├── agent/             # LangGraph、Provider、工具、状态与提取器
 │   ├── data/              # Neo4j、SQLite、画像与归一化
 │   └── README.md
 └── README.md
@@ -35,8 +35,10 @@ DeepStudy/
 ## 功能概览
 
 - **流式对话**：首轮提问与划词追问均支持流式输出。
+- **Agent 主链路**：Router → Planner → Gemini Function Calling → Tool Executor → Verifier → Memory Writer。
+- **Agent Trace**：通过标准 SSE 实时展示节点、工具参数摘要与验证结果，并随历史消息持久化。
 - **知识图谱**：对话树与概念节点写入 Neo4j，侧边栏用 ReactFlow 展示；学习计划内的概念在图谱上以淡绿色卡片高亮。
-- **学习画像**：按概念维护 U/R/A 与练习次数；支持查看列表、删除概念；划词追问用 LLM 提炼概念并鼓励归类到父/祖先节点已有概念。
+- **学习画像**：按概念维护 U/R/A 与练习次数；支持查看和删除；Memory Writer 用本地概念提取更新画像，避免额外消耗免费模型请求。
 - **学习计划**：用户手动维护的“待重点学习”概念列表，存于后端（多设备/刷新同步）；在学习画像弹层中左侧为概念列表、右侧为学习计划，支持从左侧拖拽或点击「加入计划」，右侧可「移出计划」。
 - **概念归一化**：词法规范化 + 别名字典（`profile_aliases.json`）+ 可选 Embedding 合并；LLM 可建议别名并动态追加到别名表。
 
@@ -124,9 +126,9 @@ npm run dev
 
 ## 使用流程
 
-1. **对话**：在聊天框输入问题，AI 流式回答；首轮会做概念提炼并更新学习画像与图谱。
-2. **划词追问**：选中回答中的文本，在弹层中输入追问并提交；追问回答会基于父/祖先节点已有概念做 LLM 概念提炼，并可选写入别名建议。
-3. **知识图谱**：右侧可展开/收起侧栏，查看当前会话的对话树与概念节点；学习计划中的概念会以淡绿色背景显示。
+1. **对话**：在聊天框输入问题，前端会展示 Router、Planner、工具调用、Verifier 和 Memory Writer 的执行摘要。
+2. **划词追问**：选中回答中的文本，在弹层中输入追问；选中文本、父回答和会话历史会进入 AgentState。
+3. **知识图谱**：右侧可展开/收起侧栏，在思维导图与关系图布局间切换；学习计划中的概念会高亮。
 4. **学习画像与学习计划**：顶部「学习画像」打开弹层。左侧为正在学习的概念列表（U/R/A、练习次数、得分），可「删除」从画像移除或「加入计划」；右侧为学习计划，可将左侧概念拖入或点击加入，计划内可「移出计划」。学习计划存于后端，多设备与刷新后仍保留。
 
 ## 开发指南
@@ -147,7 +149,7 @@ make compose-config
 
 - 分支：`main` 稳定，功能用 `feature/*`
 - 遵循单一职责与 SOLID；修改遵循 KISS
-- 后端 Prompt 统一放在 `backend/agent/prompts/system_prompts.py`
+- LangGraph 主链路系统指令在 `backend/agent/graph.py`；旧策略 Prompt 保留在 `backend/agent/prompts/` 供兼容参考
 
 ## 常见问题
 

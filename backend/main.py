@@ -20,8 +20,8 @@ logger = logging.getLogger(__name__)
 # 创建 FastAPI 应用
 app = FastAPI(
     title="DeepStudy API",
-    description="基于 Gemini 3 Flash 的递归学习 Agent",
-    version="0.2.0"
+    description="基于 LangGraph 与 Gemini 3 Flash 的递归学习 Agent",
+    version="0.3.0"
 )
 
 # 注册知识库路由（在 CORS 之前）
@@ -63,13 +63,13 @@ async def startup_event():
 @app.get("/")
 async def root():
     """根路径"""
-    return {"message": "DeepStudy API", "version": "0.2.0"}
+    return {"message": "DeepStudy API", "version": "0.3.0", "runtime": "langgraph"}
 
 
 @app.get("/health")
 async def health():
     """健康检查"""
-    return {"status": "healthy"}
+    return {"status": "healthy", "agent_runtime": "langgraph"}
 
 
 if __name__ == "__main__":

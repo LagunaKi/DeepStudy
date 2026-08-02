@@ -1,5 +1,6 @@
 """SQLite-backed chat session and message history."""
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -94,14 +95,22 @@ async def get_session(session_id: str, user_id: str) -> dict[str, Any] | None:
 
         message_cursor = await db.execute(
             """
-            SELECT id, role, content, conversation_id, parent_id, status, created_at
+            SELECT id, role, content, conversation_id, parent_id, status,
+                   agent_trace, created_at
             FROM chat_messages
             WHERE session_id = ?
             ORDER BY created_at ASC, rowid ASC
             """,
             (session_id,),
         )
-        messages = [dict(row) for row in await message_cursor.fetchall()]
+        messages = []
+        for row in await message_cursor.fetchall():
+            message = dict(row)
+            try:
+                message["agent_trace"] = json.loads(message.get("agent_trace") or "[]")
+            except (json.JSONDecodeError, TypeError):
+                message["agent_trace"] = []
+            messages.append(message)
 
     result = dict(session)
     result["messages"] = messages
@@ -153,6 +162,7 @@ async def add_message(
     conversation_id: str | None = None,
     parent_id: str | None = None,
     status: str = "complete",
+    agent_trace: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     await ensure_session(session_id, user_id)
     message_id = str(uuid4())
@@ -169,8 +179,8 @@ async def add_message(
             """
             INSERT INTO chat_messages (
                 id, session_id, role, content, conversation_id,
-                parent_id, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                parent_id, status, agent_trace, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 message_id,
@@ -180,6 +190,7 @@ async def add_message(
                 conversation_id,
                 parent_id,
                 status,
+                json.dumps(agent_trace or [], ensure_ascii=False),
                 timestamp,
             ),
         )
@@ -210,5 +221,6 @@ async def add_message(
         "conversation_id": conversation_id,
         "parent_id": parent_id,
         "status": status,
+        "agent_trace": agent_trace or [],
         "created_at": timestamp,
     }

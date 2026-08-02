@@ -3,7 +3,7 @@ API 响应模型定义
 """
 from typing import List, Optional, Dict, Any
 from datetime import datetime
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ContentFragment(BaseModel):
@@ -49,6 +49,8 @@ class AuthResponse(BaseModel):
 
 class DialogueNodeBase(BaseModel):
     """对话节点模型：树状结构的基础"""
+    model_config = ConfigDict(from_attributes=True)
+
     node_id: str = Field(..., description="全局唯一ID")
     parent_id: Optional[str] = Field(None, description="溯源关键：指向父节点 ID")
     user_id: str = Field(..., description="所属用户ID，确保数据隔离")
@@ -59,10 +61,6 @@ class DialogueNodeBase(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     children: List['DialogueNodeBase'] = Field(default_factory=list, description="子节点列表")
     
-    class Config:
-        from_attributes = True
-
-
 # 为了向后兼容，保留 ConversationNode 作为别名
 ConversationNode = DialogueNodeBase
 

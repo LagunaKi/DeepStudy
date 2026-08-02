@@ -2,7 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 import pytest
-from google.genai import errors
+from google.genai import errors, types
 
 from backend.agent import llm_client
 
@@ -71,6 +71,110 @@ def test_complete_and_stream_use_gemini(monkeypatch) -> None:
     assert fake_root.aio.models.calls[0]["model"] == "gemini-3-flash-preview"
     assert fake_root.aio.models.calls[0]["contents"] == "explain RAG"
     assert fake_root.aio.closed is True
+
+
+def test_function_calling_is_manual_and_uses_declared_tools(monkeypatch) -> None:
+    fake_root = FakeClient(api_key="test-key")
+    model_content = types.Content(
+        role="model",
+        parts=[
+            types.Part(
+                function_call=types.FunctionCall(
+                    id="call-1",
+                    name="calculate_expression",
+                    args={"expression": "2 + 2"},
+                )
+            )
+        ],
+    )
+
+    async def generate_content(**kwargs):
+        fake_root.aio.models.calls.append(kwargs)
+        return SimpleNamespace(
+            text="",
+            function_calls=[model_content.parts[0].function_call],
+            candidates=[SimpleNamespace(content=model_content)],
+        )
+
+    fake_root.aio.models.generate_content = generate_content
+    monkeypatch.setattr(llm_client.genai, "Client", lambda api_key: fake_root)
+
+    async def scenario() -> llm_client.GeminiFunctionResponse:
+        client = llm_client.GeminiLLMClient(
+            model_name="function-test-model",
+            api_key="test-key",
+        )
+        return await client.acomplete_with_tools(
+            contents=[types.Content(role="user", parts=[types.Part(text="2+2")])],
+            system_instruction="Use a calculator when useful.",
+            tool_declarations=[
+                types.FunctionDeclaration(
+                    name="calculate_expression",
+                    description="calculate",
+                    parameters_json_schema={
+                        "type": "object",
+                        "properties": {"expression": {"type": "string"}},
+                        "required": ["expression"],
+                    },
+                )
+            ],
+        )
+
+    response = asyncio.run(scenario())
+    config = fake_root.aio.models.calls[0]["config"]
+
+    assert response.function_calls[0].name == "calculate_expression"
+    assert response.function_calls[0].arguments == {"expression": "2 + 2"}
+    assert config.automatic_function_calling.disable is True
+    assert config.tools[0].function_declarations[0].name == "calculate_expression"
+
+
+def test_streaming_function_calling_yields_text_chunks(monkeypatch) -> None:
+    fake_root = FakeClient(api_key="test-key")
+
+    async def generate_content_stream(**kwargs):
+        fake_root.aio.models.calls.append(kwargs)
+
+        async def chunks():
+            for text in ("逐段", "回答"):
+                content = types.Content(role="model", parts=[types.Part(text=text)])
+                yield SimpleNamespace(
+                    text=text,
+                    function_calls=[],
+                    candidates=[SimpleNamespace(content=content)],
+                )
+
+        return chunks()
+
+    fake_root.aio.models.generate_content_stream = generate_content_stream
+    monkeypatch.setattr(llm_client.genai, "Client", lambda api_key: fake_root)
+
+    async def scenario() -> list[llm_client.GeminiFunctionChunk]:
+        client = llm_client.GeminiLLMClient(
+            model_name="function-stream-test-model",
+            api_key="test-key",
+        )
+        return [
+            chunk
+            async for chunk in client.astream_with_tools(
+                contents=[types.Content(role="user", parts=[types.Part(text="解释 Agent")])],
+                system_instruction="Teach clearly.",
+                tool_declarations=[
+                    types.FunctionDeclaration(
+                        name="calculate_expression",
+                        description="calculate",
+                        parameters_json_schema={"type": "object", "properties": {}},
+                    )
+                ],
+            )
+        ]
+
+    chunks = asyncio.run(scenario())
+
+    assert [chunk.text for chunk in chunks] == ["逐段", "回答"]
+    config = fake_root.aio.models.calls[0]["config"]
+    assert config.automatic_function_calling.disable
+    assert config.tool_config.function_calling_config.stream_function_call_arguments is None
 
 
 def test_rate_limit_error_is_sanitized_and_exposes_retry_delay(monkeypatch) -> None:

@@ -115,10 +115,19 @@ async def init_db():
             conversation_id TEXT,
             parent_id TEXT,
             status TEXT NOT NULL DEFAULT 'complete',
+            agent_trace TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL,
             FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
         )
     """)
+
+    # 兼容已有数据库：SQLite 的 CREATE TABLE IF NOT EXISTS 不会补充新列。
+    columns_cursor = await db.execute("PRAGMA table_info(chat_messages)")
+    columns = {row[1] for row in await columns_cursor.fetchall()}
+    if "agent_trace" not in columns:
+        await db.execute(
+            "ALTER TABLE chat_messages ADD COLUMN agent_trace TEXT NOT NULL DEFAULT '[]'"
+        )
 
     await db.execute("""
         CREATE INDEX IF NOT EXISTS idx_chat_sessions_user_updated
@@ -222,4 +231,3 @@ async def get_user_by_email(
     if row:
         return dict(row)
     return None
-
