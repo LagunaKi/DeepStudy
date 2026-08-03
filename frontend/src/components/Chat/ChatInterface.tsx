@@ -23,6 +23,7 @@ import TextFragment from '../Markdown/TextFragment'
 import KnowledgeGraph from '../MindMap/KnowledgeGraph'
 import ConversationSidebar from './ConversationSidebar'
 import AgentTrace from './AgentTrace'
+import MemoryCenter from '../Memory/MemoryCenter'
 
 interface ChatTurn {
   id: string
@@ -105,6 +106,7 @@ const ChatInterface = () => {
   const [questionInput, setQuestionInput] = useState<string>('')
 
   const [profileModalOpen, setProfileModalOpen] = useState(false)
+  const [memoryCenterOpen, setMemoryCenterOpen] = useState(false)
   const [profileList, setProfileList] = useState<ConceptProfileSummary[]>([])
   const [profileLoading, setProfileLoading] = useState(false)
   const [profileError, setProfileError] = useState<string>('')
@@ -899,6 +901,15 @@ const ChatInterface = () => {
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
             <button
+              onClick={() => setMemoryCenterOpen(true)}
+              style={{
+                padding: '8px 16px', border: '1px solid #C4B5FD', borderRadius: '6px',
+                backgroundColor: '#F5F3FF', cursor: 'pointer', fontSize: '14px', color: '#5B21B6',
+              }}
+            >
+              记忆中心
+            </button>
+            <button
               onClick={handleProfileOpen}
               style={{
                 padding: '8px 16px',
@@ -1434,6 +1445,7 @@ const ChatInterface = () => {
           </div>
         </div>
       )}
+      <MemoryCenter open={memoryCenterOpen} onClose={() => setMemoryCenterOpen(false)} />
     </div>
   )
 }

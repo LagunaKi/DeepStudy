@@ -234,6 +234,51 @@ async def init_db():
         ON rag_chunks(user_id, session_id, document_id, chunk_index)
     """)
 
+    # Phase 3: 可审计、可编辑、可遗忘的跨会话长期记忆。
+    # 短期对话仍由 chat_messages 管理，运行状态由 LangGraph checkpoint 管理。
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS agent_memories (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            scope TEXT NOT NULL CHECK (scope IN ('semantic', 'episodic')),
+            kind TEXT NOT NULL,
+            content TEXT NOT NULL,
+            normalized_content TEXT NOT NULL,
+            dedupe_key TEXT NOT NULL,
+            source TEXT NOT NULL,
+            source_session_id TEXT,
+            source_conversation_id TEXT,
+            confidence REAL NOT NULL DEFAULT 0.7,
+            importance REAL NOT NULL DEFAULT 0.5,
+            user_confirmed INTEGER NOT NULL DEFAULT 0,
+            access_count INTEGER NOT NULL DEFAULT 0,
+            last_accessed_at TEXT,
+            expires_at TEXT,
+            metadata TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(user_id, dedupe_key)
+        )
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_memories_user_scope_updated
+        ON agent_memories(user_id, scope, updated_at DESC)
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS agent_memory_audit (
+            id TEXT PRIMARY KEY,
+            memory_id TEXT NOT NULL,
+            user_id TEXT NOT NULL,
+            action TEXT NOT NULL,
+            details TEXT NOT NULL DEFAULT '{}',
+            created_at TEXT NOT NULL
+        )
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_agent_memory_audit_user_created
+        ON agent_memory_audit(user_id, created_at DESC)
+    """)
+
     await db.commit()
     await db.close()
 

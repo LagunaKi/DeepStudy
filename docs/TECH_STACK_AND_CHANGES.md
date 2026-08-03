@@ -8,9 +8,9 @@ DeepStudy 原本是一个黑客松阶段的递归学习助手：用户提出问�
 
 现在的优化方向是把它升级成更完整的学习型 Agent 项目：
 
-> 一个支持多轮学习会话、知识图谱、学习画像、RAG 预留能力和 Agent 化编排演进的自适应学习系统。
+> 一个支持多轮学习会话、GraphRAG、分层 Memory、Skills、MCP 和可观察 Agent 编排的自适应学习系统。
 
-当前项目已经使用 `React + FastAPI + LangGraph + Gemini + Neo4j + SQLite` 跑通核心学习闭环，并完成 Gemini Function Calling、标准 SSE 和 Agent Trace。MCP Server、Skills 运行时、完整 GraphRAG 与分层长期 Memory 仍属于后续阶段。
+当前项目已经使用 `React + FastAPI + LangGraph + Gemini + Neo4j + SQLite` 跑通核心学习闭环，并完成 Gemini Function Calling、标准 SSE、Agent Trace、GraphRAG、分层长期 Memory、Skills 运行时与 MCP Server。
 
 ## 2. 原项目已有技术栈
 
@@ -403,13 +403,13 @@ LangGraph 负责：
 
 需要谨慎表述的部分：
 
-- 不能说“已经完成 GraphRAG”，目前只是有 Neo4j 图谱和 RAG 依赖/接口基础。
-- 不能说“已经支持完整 MCP”，目前是路线图目标。
-- 不能说“已经有完整 Memory 系统”，目前是会话历史 + 学习画像，分层记忆还在后续阶段。
+- 当前是单用户 `anonymous`，不能表述为已完成多租户数据隔离。
+- GraphRAG 有离线 30 条回归集，但不能把 fixture 指标表述为真实生产效果。
+- Verifier 是确定性覆盖度/引用校验，不是独立 LLM 事实核查器。
 
 推荐面试表述：
 
-> 这个项目原本是一个黑客松学习助手。我保留 React + FastAPI 产品框架，接入 Gemini 3 Flash 免费模型，并把固定编排重构为 LangGraph Planner–Executor–Verifier 状态机。模型通过原生 Function Calling 使用学习画像、Neo4j、计算器和课程检索工具，前端实时展示并保存 Agent Trace。下一步重点是把文件上传、混合检索和来源引用接入主链路，完成 GraphRAG 与分层长期记忆。
+> 这个项目原本是一个黑客松学习助手。我保留 React + FastAPI 产品框架，接入 Gemini 3 Flash 免费模型，并把固定编排重构为 LangGraph Planner–Executor–Verifier 状态机。模型通过原生 Function Calling 使用学习画像、Neo4j、计算器和课程检索工具；GraphRAG 提供带来源证据，分层 Memory 会检索、去重并允许用户遗忘。运行时还通过 Skills 渐进加载教学工作流，并通过 MCP 向外部 Agent Host 暴露能力。
 
 ## 8. 后续阶段建议
 
@@ -419,21 +419,21 @@ LangGraph 负责：
 - Router、Planner、Gemini Agent、Tool Executor、Verifier、Memory Writer。
 - Gemini Function Calling、标准 SSE、可持久化 Agent Trace。
 
-### 阶段 2：RAG 与文件上传
+### 阶段 2：RAG 与文件上传（已完成）
 
 - 前端支持 PDF / Markdown / TXT 上传。
 - 后端做文档解析、切片、向量化。
 - 聊天主链路调用 `search_course_materials`。
 - 回答中展示引用来源。
 
-### 阶段 3：知识图谱与 GraphRAG
+### 阶段 2：知识图谱与 GraphRAG（已完成）
 
 - 从课程资料抽取 `Concept`、`Formula`、`Example`、`Question`。
 - 保存 `chunk_id`、页码、章节和置信度。
 - 实现图谱检索工具 `query_concept_graph`。
 - 把“学习思维导图”和“技术知识图谱”拆成两个视图。
 
-### 阶段 4：Memory、Skills、MCP
+### 阶段 3：Memory、Skills、MCP（已完成）
 
 - Memory 分为短期记忆、语义记忆、情景记忆和学习画像。
 - 增加 `skills/` 目录，例如 explain-concept、derive-formula、generate-practice。

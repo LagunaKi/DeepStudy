@@ -5,6 +5,7 @@ import uuid
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from backend.agent.checkpoints import checkpoint_saver
 from backend.agent.graph import DeepStudyAgentGraph
 from backend.agent.llm_client import GeminiLLMClient
 from backend.agent.model_provider import GeminiModelProvider
@@ -27,7 +28,7 @@ class AgentOrchestrator:
             thinking_level=settings.GEMINI_THINKING_LEVEL,
             min_request_interval_seconds=settings.GEMINI_MIN_REQUEST_INTERVAL_SECONDS,
         )
-        self.runtime = DeepStudyAgentGraph(GeminiModelProvider(self.llm))
+        self.provider = GeminiModelProvider(self.llm)
 
     async def _parent_context(self, parent_id: str | None) -> str:
         if not parent_id:
@@ -79,8 +80,11 @@ class AgentOrchestrator:
             "parent_context": await self._parent_context(parent_id),
             "messages": await self._session_messages(session_id, user_id),
             "user_profile": [],
+            "relevant_memories": [],
             "task_plan": [],
             "recommended_tools": [],
+            "active_skill": "",
+            "skill_instruction": "",
             "model_contents": [],
             "pending_tool_calls": [],
             "tool_calls": [],
@@ -112,8 +116,10 @@ class AgentOrchestrator:
             "parent_id": parent_id,
             "runtime": "langgraph",
         }
-        async for event in self.runtime.stream(state):
-            yield event
+        async with checkpoint_saver() as saver:
+            runtime = DeepStudyAgentGraph(self.provider, checkpointer=saver)
+            async for event in runtime.stream(state):
+                yield event
         yield {"type": "end"}
 
     async def process_recursive_query_stream(
@@ -141,8 +147,29 @@ class AgentOrchestrator:
             "parent_id": parent_id,
             "runtime": "langgraph",
         }
-        async for event in self.runtime.stream(state):
-            yield event
+        async with checkpoint_saver() as saver:
+            runtime = DeepStudyAgentGraph(self.provider, checkpointer=saver)
+            async for event in runtime.stream(state):
+                yield event
+        yield {"type": "end"}
+
+    async def resume_query_stream(
+        self, session_id: str
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        async with checkpoint_saver() as saver:
+            runtime = DeepStudyAgentGraph(self.provider, checkpointer=saver)
+            snapshot = await runtime.graph.aget_state(
+                {"configurable": {"thread_id": session_id}}
+            )
+            values = snapshot.values or {}
+            yield {
+                "type": "meta",
+                "conversation_id": values.get("conversation_id", ""),
+                "parent_id": values.get("parent_id"),
+                "runtime": "langgraph-checkpoint-resume",
+            }
+            async for event in runtime.resume(session_id):
+                yield event
         yield {"type": "end"}
 
     async def process_query(

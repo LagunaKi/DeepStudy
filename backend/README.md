@@ -65,7 +65,7 @@ API 文档：http://localhost:8000/docs
 
 ## 核心流程
 
-`Router → Planner → Gemini Function Calling → Tool Executor（按需）→ Verifier → Memory Writer`。普通问答只请求模型一次；使用工具时将本地结果回传模型再生成回答。
+`Router → Memory Retriever → Planner/Skill → Retriever → Gemini Function Calling → Tool Executor（按需）→ Verifier → Memory Writer`。普通问答只请求模型一次；使用工具时将本地结果回传模型再生成回答。每个节点由 SQLite Checkpoint 持久化。
 
 ## API 概览
 
@@ -75,6 +75,19 @@ API 文档：http://localhost:8000/docs
   Body: `query`, `parent_id?`, `ref_fragment_id?`, `selected_text?`, `session_id`  
   标准 SSE：`type: meta | agent | delta | error | end`。`agent` 包含可安全展示的节点摘要，Trace 会随历史消息持久化。
   请求可带 `attachment_ids`；有课程资料时额外输出 `sources` 事件。
+  失败后可传 `resume: true`，从同一会话最后一个 LangGraph checkpoint 恢复。
+
+### Memory
+
+- **GET /api/memories**：列出跨会话语义/情景记忆。
+- **POST /api/memories**：添加用户确认的语义记忆。
+- **PATCH /api/memories/{id}**：确认、编辑或调整重要度。
+- **DELETE /api/memories/{id}**：永久遗忘正文。
+- **GET /api/sessions/{id}/checkpoint**：查看会话 checkpoint 状态。
+
+### MCP
+
+`python -m backend.mcp_server` 以 stdio 启动 DeepStudy MCP Server。
 
 ### 课程资料
 

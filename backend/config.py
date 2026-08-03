@@ -60,6 +60,7 @@ class Settings(BaseSettings):
     
     # SQLite 数据库（根据环境自动选择路径）
     SQLITE_DB_PATH: str = ""
+    LANGGRAPH_CHECKPOINT_DB_PATH: str = ""
     
     # 向量存储（根据环境自动选择路径）
     VECTOR_STORE_PATH: str = ""
@@ -84,6 +85,12 @@ class Settings(BaseSettings):
                 self.SQLITE_DB_PATH = get_storage_path("deepstudy.db")
             else:
                 self.SQLITE_DB_PATH = get_storage_path("storage/deepstudy.db")
+
+        if not self.LANGGRAPH_CHECKPOINT_DB_PATH:
+            if is_docker_env():
+                self.LANGGRAPH_CHECKPOINT_DB_PATH = get_storage_path("checkpoints.db")
+            else:
+                self.LANGGRAPH_CHECKPOINT_DB_PATH = get_storage_path("storage/checkpoints.db")
         
         # 如果未设置 VECTOR_STORE_PATH，根据环境自动设置
         if not self.VECTOR_STORE_PATH:

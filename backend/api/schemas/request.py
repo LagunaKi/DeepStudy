@@ -33,3 +33,7 @@ class ChatRequest(BaseModel):
         max_length=8,
         description="本轮消息关联的已上传附件 ID",
     )
+    resume: bool = Field(
+        default=False,
+        description="从该会话最后一个 LangGraph checkpoint 恢复，不重复写入用户消息",
+    )

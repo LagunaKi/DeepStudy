@@ -5,6 +5,7 @@ from typing import Any, Literal
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 
+from backend.agent.checkpoints import checkpoint_status, delete_checkpoint
 from backend.data.conversation_store import (
     DEFAULT_SESSION_TITLE,
     create_session,
@@ -76,7 +77,15 @@ async def patch_session(session_id: str, payload: SessionUpdate):
     return {"id": session_id, "title": payload.title.strip()}
 
 
+@router.get("/{session_id}/checkpoint")
+async def get_session_checkpoint(session_id: str):
+    if await get_session(session_id, ANONYMOUS_USER_ID) is None:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    return await checkpoint_status(session_id)
+
+
 @router.delete("/{session_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def remove_session(session_id: str):
     if not await delete_session(session_id, ANONYMOUS_USER_ID):
         raise HTTPException(status_code=404, detail="会话不存在")
+    await delete_checkpoint(session_id)

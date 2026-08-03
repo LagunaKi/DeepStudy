@@ -15,6 +15,7 @@ import {
   AttachmentInfo,
   RAGDocument,
   RAGSource,
+  MemoryRecord,
 } from '../types/api'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '/api'
@@ -198,6 +199,36 @@ export const sessionAPI = {
 
   remove: async (sessionId: string): Promise<void> => {
     await apiClient.delete(`/sessions/${sessionId}`)
+  },
+}
+
+export const memoryAPI = {
+  list: async (scope?: MemoryRecord['scope']): Promise<MemoryRecord[]> => {
+    const response = await apiClient.get<MemoryRecord[]>('/memories', {
+      params: scope ? { scope } : {},
+    })
+    return response.data
+  },
+
+  create: async (content: string): Promise<MemoryRecord> => {
+    const response = await apiClient.post<{ memory: MemoryRecord }>('/memories', {
+      content,
+      kind: 'user_note',
+      importance: 0.9,
+    })
+    return response.data.memory
+  },
+
+  update: async (
+    memoryId: string,
+    changes: Partial<Pick<MemoryRecord, 'content' | 'user_confirmed' | 'importance'>>,
+  ): Promise<MemoryRecord> => {
+    const response = await apiClient.patch<MemoryRecord>(`/memories/${memoryId}`, changes)
+    return response.data
+  },
+
+  remove: async (memoryId: string): Promise<void> => {
+    await apiClient.delete(`/memories/${memoryId}`)
   },
 }
 

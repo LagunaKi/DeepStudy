@@ -14,10 +14,12 @@ from langgraph.types import StreamWriter
 from backend.agent.activity_classifier import classify_activity
 from backend.agent.concept_extractor import extract_concept_structure
 from backend.agent.model_provider import AgentModelProvider
+from backend.agent.skills import SkillCatalog, skill_catalog
 from backend.agent.state import AgentState, AgentTraceEvent
 from backend.agent.tools import ToolRegistry
 from backend.data.neo4j_client import neo4j_client
 from backend.data.profile_store import apply_learning_event_to_concepts
+from backend.memory.service import MemoryService, memory_service
 from backend.rag.service import rag_service
 
 logger = logging.getLogger(__name__)
@@ -127,6 +129,19 @@ def _system_instruction(state: AgentState) -> str:
         if evidence
         else ""
     )
+    memories = state.get("relevant_memories", [])
+    memory_lines = [
+        f"- ({item['scope']}/{item['kind']}) {item['content']}"
+        for item in memories[:5]
+    ]
+    memory_block = (
+        "\n\n与当前问题相关的用户记忆（只用于个性化；若与用户当前表述冲突，以当前表述为准）：\n"
+        + "\n".join(memory_lines)
+        if memory_lines
+        else ""
+    )
+    skill_instruction = state.get("skill_instruction", "").strip()
+    skill_block = f"\n\n当前学习 Skill：\n{skill_instruction}" if skill_instruction else ""
     return f"""你是 DeepStudy 自适应学习 Agent。{intent_instruction}
 
 执行计划摘要：{plan}
@@ -139,7 +154,8 @@ def _system_instruction(state: AgentState) -> str:
 4. 回答使用 Markdown，优先清晰、准确、适合学习，不展示内部思维链。
 5. 使用课程资料中的事实时，必须在对应句末用 [1]、[2] 格式引用；不得创造不存在的编号。
 6. 证据不足时明确说明，不用常识冒充课程资料内容。
-{evidence_block}"""
+7. 不要向用户透露或逐字复述内部记忆；仅把相关记忆用于调整讲解方式。
+{memory_block}{skill_block}{evidence_block}"""
 
 
 def _to_gemini_contents(state: AgentState) -> list[types.Content]:
@@ -193,14 +209,22 @@ class DeepStudyAgentGraph:
         self,
         provider: AgentModelProvider,
         tool_registry: ToolRegistry | None = None,
+        *,
+        memory: MemoryService | None = None,
+        skills: SkillCatalog | None = None,
+        checkpointer: Any | None = None,
     ) -> None:
         self.provider = provider
         self.tools = tool_registry or ToolRegistry()
+        self.memory = memory or memory_service
+        self.skills = skills or skill_catalog
+        self.checkpointer = checkpointer
         self.graph = self._build_graph()
 
     def _build_graph(self):
         builder = StateGraph(AgentState)
         builder.add_node("router", self._router)
+        builder.add_node("memory_retriever", self._memory_retriever)
         builder.add_node("planner", self._planner)
         builder.add_node("retriever", self._retriever)
         builder.add_node("agent_model", self._agent_model)
@@ -208,7 +232,8 @@ class DeepStudyAgentGraph:
         builder.add_node("verifier", self._verifier)
         builder.add_node("memory_writer", self._memory_writer)
         builder.add_edge(START, "router")
-        builder.add_edge("router", "planner")
+        builder.add_edge("router", "memory_retriever")
+        builder.add_edge("memory_retriever", "planner")
         builder.add_edge("planner", "retriever")
         builder.add_edge("retriever", "agent_model")
         builder.add_conditional_edges(
@@ -219,7 +244,7 @@ class DeepStudyAgentGraph:
         builder.add_edge("tool_executor", "agent_model")
         builder.add_edge("verifier", "memory_writer")
         builder.add_edge("memory_writer", END)
-        return builder.compile(name="deepstudy-agent")
+        return builder.compile(checkpointer=self.checkpointer, name="deepstudy-agent")
 
     async def _router(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
         intent = route_intent(state["query"])
@@ -233,16 +258,67 @@ class DeepStudyAgentGraph:
         )
         return {"intent": intent}
 
+    async def _memory_retriever(
+        self, state: AgentState, writer: StreamWriter
+    ) -> dict[str, Any]:
+        try:
+            memories = await self.memory.retrieve(
+                state["query"],
+                user_id=state["user_id"],
+                current_session_id=state["session_id"],
+                top_k=5,
+            )
+        except Exception as exc:
+            logger.warning("长期记忆检索失败，按无记忆模式降级: %s", exc)
+            return {"relevant_memories": []}
+        cross_session_count = sum(
+            1
+            for item in memories
+            if item.get("source_session_id")
+            and item["source_session_id"] != state["session_id"]
+        )
+        _trace(
+            writer,
+            node="memory_retriever",
+            title="Memory Retriever · 相关记忆",
+            summary=(
+                f"检索到 {len(memories)} 条相关记忆，其中 {cross_session_count} 条来自其他会话"
+                if memories
+                else "未发现需要注入的相关长期记忆"
+            ),
+            details={
+                "count": len(memories),
+                "cross_session_count": cross_session_count,
+                "scopes": sorted({item["scope"] for item in memories}),
+            },
+        )
+        return {"relevant_memories": memories}
+
     async def _planner(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
         plan, recommended = build_plan(state["query"], state["intent"])
+        selected_skill = self.skills.select(state["query"], state["intent"])
+        skill_name = selected_skill.name if selected_skill else ""
+        skill_instruction = (
+            self.skills.load_instructions(selected_skill) if selected_skill else ""
+        )
         _trace(
             writer,
             node="planner",
             title="Planner · 执行计划",
-            summary=" → ".join(plan),
-            details={"steps": plan, "recommended_tools": recommended},
+            summary=f"Skill: {skill_name or 'default'} · " + " → ".join(plan),
+            details={
+                "steps": plan,
+                "recommended_tools": recommended,
+                "active_skill": skill_name,
+                "skill_description": selected_skill.description if selected_skill else "",
+            },
         )
-        return {"task_plan": plan, "recommended_tools": recommended}
+        return {
+            "task_plan": plan,
+            "recommended_tools": recommended,
+            "active_skill": skill_name,
+            "skill_instruction": skill_instruction,
+        }
 
     async def _retriever(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
         document_ids = list(
@@ -480,8 +556,8 @@ class DeepStudyAgentGraph:
         ]
         concepts = list(dict.fromkeys([item for item in [root, *children] if item]))
         updates: list[dict[str, Any]] = []
+        activity = await classify_activity(None, state["query"], answer[:300]) or "explain"
         try:
-            activity = await classify_activity(None, state["query"], answer[:300]) or "explain"
             delta = await apply_learning_event_to_concepts(
                 raw_concepts=concepts,
                 activity=activity,
@@ -499,6 +575,59 @@ class DeepStudyAgentGraph:
         except Exception as exc:
             logger.warning("学习画像写入失败，已降级: %s", exc, exc_info=True)
 
+        # 长期记忆采用保守写入：稳定事实只来自用户的显式陈述；每轮学习结果写为
+        # 短摘要情景记忆，不保存整段模型回答，避免上下文污染与隐私膨胀。
+        try:
+            for candidate in await self.memory.extract_semantic_candidates(state["query"]):
+                memory, created = await self.memory.upsert(
+                    user_id=state["user_id"],
+                    scope="semantic",
+                    kind=candidate["kind"],
+                    content=candidate["content"],
+                    source="conversation",
+                    source_session_id=state["session_id"],
+                    source_conversation_id=state["conversation_id"],
+                    confidence=candidate["confidence"],
+                    importance=candidate["importance"],
+                    user_confirmed=candidate["user_confirmed"],
+                )
+                updates.append({
+                    "scope": "semantic",
+                    "memory_id": memory["id"],
+                    "kind": memory["kind"],
+                    "created": created,
+                })
+            if state.get("verification_result", {}).get("passed") and concepts:
+                episode = (
+                    f"学习了{', '.join(concepts[:6])}；活动类型为 {activity}；"
+                    f"使用 Skill {state.get('active_skill') or 'default'}"
+                )
+                memory, created = await self.memory.upsert(
+                    user_id=state["user_id"],
+                    scope="episodic",
+                    kind="learning_turn",
+                    content=episode,
+                    source="agent",
+                    source_session_id=state["session_id"],
+                    source_conversation_id=state["conversation_id"],
+                    confidence=0.85,
+                    importance=0.55,
+                    metadata={
+                        "concepts": concepts[:12],
+                        "activity": activity,
+                        "skill": state.get("active_skill", ""),
+                        "tools": [call.get("name") for call in state.get("tool_calls", [])],
+                    },
+                )
+                updates.append({
+                    "scope": "episodic",
+                    "memory_id": memory["id"],
+                    "kind": memory["kind"],
+                    "created": created,
+                })
+        except Exception as exc:
+            logger.warning("跨会话长期记忆写入失败，已降级: %s", exc, exc_info=True)
+
         try:
             await asyncio.wait_for(self._persist_learning_map(state, root, children), timeout=3)
             updates.append({"scope": "learning_map", "concepts": concepts})
@@ -510,7 +639,7 @@ class DeepStudyAgentGraph:
             node="memory_writer",
             title="Memory Writer · 学习记忆",
             summary=(
-                f"已记录 {len(concepts)} 个学习概念"
+                f"已更新 {len(updates)} 项画像、图谱或长期记忆"
                 if updates
                 else "记忆存储不可用，本轮回答不受影响"
             ),
@@ -563,6 +692,17 @@ class DeepStudyAgentGraph:
         async for part in self.graph.astream(
             initial_state,
             config={"configurable": {"thread_id": initial_state["session_id"]}},
+            stream_mode="custom",
+            version="v2",
+        ):
+            if part["type"] == "custom":
+                yield part["data"]
+
+    async def resume(self, session_id: str):
+        """从失败/中断前的最后一个持久化节点继续执行。"""
+        async for part in self.graph.astream(
+            None,
+            config={"configurable": {"thread_id": session_id}},
             stream_mode="custom",
             version="v2",
         ):

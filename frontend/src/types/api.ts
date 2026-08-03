@@ -39,6 +39,25 @@ export interface ChatRequest {
   selected_text?: string | null // 如果是划词追问，需带上选中的文本
   session_id: string // 会话 ID，区分不同学习主题
   attachment_ids?: string[]
+  resume?: boolean
+}
+
+export interface MemoryRecord {
+  id: string
+  scope: 'semantic' | 'episodic'
+  kind: string
+  content: string
+  source: string
+  source_session_id?: string | null
+  source_conversation_id?: string | null
+  confidence: number
+  importance: number
+  user_confirmed: boolean
+  access_count: number
+  last_accessed_at?: string | null
+  created_at: string
+  updated_at: string
+  metadata?: Record<string, unknown>
 }
 
 export interface AttachmentInfo {

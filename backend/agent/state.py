@@ -38,7 +38,10 @@ class AgentState(TypedDict, total=False):
     parent_context: str
     messages: list[dict[str, str]]
     user_profile: list[dict[str, Any]]
+    relevant_memories: list[dict[str, Any]]
     intent: str
+    active_skill: str
+    skill_instruction: str
     task_plan: list[str]
     recommended_tools: list[str]
     model_contents: list[Any]

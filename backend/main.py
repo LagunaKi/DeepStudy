@@ -1,12 +1,14 @@
 """
 FastAPI 应用入口
 """
-import logging
 import json
+import logging
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+from backend.api.routes import chat, knowledge, memories, mindmap, profile, sessions
 from backend.config import settings
-from backend.api.routes import chat, knowledge, mindmap, profile, sessions
 from backend.data.sqlite_db import init_db
 
 # 配置日志
@@ -25,7 +27,11 @@ app = FastAPI(
 )
 
 # 配置 CORS
-cors_origins = json.loads(settings.CORS_ORIGINS) if isinstance(settings.CORS_ORIGINS, str) else settings.CORS_ORIGINS
+cors_origins = (
+    json.loads(settings.CORS_ORIGINS)
+    if isinstance(settings.CORS_ORIGINS, str)
+    else settings.CORS_ORIGINS
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -40,6 +46,7 @@ app.include_router(mindmap.router, prefix="/api")
 app.include_router(profile.router, prefix="/api")
 app.include_router(sessions.router, prefix="/api")
 app.include_router(knowledge.router, prefix="/api")
+app.include_router(memories.router, prefix="/api")
 
 
 @app.on_event("startup")

@@ -1,6 +1,6 @@
 # DeepStudy
 
-基于 LangGraph 与 Gemini 3 Flash 的递归学习 Agent：支持 Function Calling、Agent Trace、知识图谱与学习画像。
+基于 LangGraph 与 Gemini 3 Flash 的递归学习 Agent：支持 Function Calling、Agent Trace、GraphRAG、分层 Memory、Skills 与 MCP。
 
 > 当前正在从黑客松 Demo 升级为基于 LangGraph、GraphRAG 与分层记忆的
 > 自适应学习 Agent。完整方案见
@@ -41,6 +41,9 @@ DeepStudy/
 - **多模态附件**：支持直接粘贴图片，也支持上传图片、PDF、Markdown、TXT 与常见代码文件；图片直接交给 Gemini 理解，文档显示解析/索引进度。
 - **知识图谱**：对话树与概念节点写入 Neo4j，侧边栏用 ReactFlow 展示；学习计划内的概念在图谱上以淡绿色卡片高亮。
 - **学习画像**：按概念维护 U/R/A 与练习次数；支持查看和删除；Memory Writer 用本地概念提取更新画像，避免额外消耗免费模型请求。
+- **分层 Memory**：会话短期记忆、LangGraph Checkpoint、跨会话语义/情景记忆与 U/R/A 画像；长期记忆支持去重、相关检索、确认、编辑和永久遗忘。
+- **Agent Skills**：概念讲解、公式推导、生成练习与错题复盘，按元数据选择后渐进加载完整指令。
+- **MCP Server**：向外部 Agent Host 暴露课程检索、概念图谱、练习生成、课程/概念资源和教学 Prompts。
 - **学习计划**：用户手动维护的“待重点学习”概念列表，存于后端（多设备/刷新同步）；在学习画像弹层中左侧为概念列表、右侧为学习计划，支持从左侧拖拽或点击「加入计划」，右侧可「移出计划」。
 - **概念归一化**：词法规范化 + 别名字典（`profile_aliases.json`）+ 可选 Embedding 合并；LLM 可建议别名并动态追加到别名表。
 
@@ -132,6 +135,15 @@ npm run dev
 2. **划词追问**：选中回答中的文本，在弹层中输入追问；选中文本、父回答和会话历史会进入 AgentState。
 3. **知识图谱**：右侧可展开/收起侧栏，在思维导图与关系图布局间切换；学习计划中的概念会高亮。
 4. **学习画像与学习计划**：顶部「学习画像」打开弹层。左侧为正在学习的概念列表（U/R/A、练习次数、得分），可「删除」从画像移除或「加入计划」；右侧为学习计划，可将左侧概念拖入或点击加入，计划内可「移出计划」。学习计划存于后端，多设备与刷新后仍保留。
+5. **记忆中心**：顶部「记忆中心」查看跨会话语义记忆和学习情景；可手动添加、确认、编辑或永久遗忘。
+
+### MCP Server
+
+```bash
+python -m backend.mcp_server
+```
+
+以 stdio 方式连接，服务入口为 `backend.mcp_server`；MCP Host 的工作目录应设为项目根目录。
 
 ## 开发指南
 

@@ -36,6 +36,7 @@ FastAPI 是 API 层，LangGraph 是 FastAPI 内部的 Agent 编排运行时，�
 ```text
 START
   -> Router
+  -> Memory Retriever
   -> Planner
   -> Agent Model
   -> Tool Executor（按需）
@@ -86,14 +87,18 @@ Router 使用本地确定性规则区分 `concept`、`derivation`、`code`，不
 - 右侧默认是树状学习思维导图，并提供“思维导图 / 关系图”布局切换。
 - 区分临时 429、每日免费额度耗尽与 Agent 运行错误。
 
-### Memory Writer
+### 分层 Memory
 
-Memory Writer 已作为 LangGraph 一等节点存在，当前写入范围是：
+Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为：
 
-- SQLite U/R/A 学习画像与对话概念记录。
-- Neo4j 对话、根概念与子概念学习地图。
+- 短期记忆：会话消息历史。
+- 运行记忆：SQLite LangGraph Checkpoint，可按 `thread_id` 中断恢复。
+- 语义记忆：用户明确表达的目标、偏好、基础或“请记住”的事实。
+- 情景记忆：通过验证的学习轮次摘要，不保存整段模型回答。
+- 结构化记忆：SQLite U/R/A 学习画像与 Neo4j 学习地图。
 
-这属于阶段 1 的结构化学习记忆，不等同于阶段 3 的完整分层长期 Memory。跨会话语义记忆、情景记忆、记忆查看/遗忘与持久化 Checkpoint 尚未完成。
+长期记忆采用哈希去重、置信度/重要度、时间衰减与词项相关性打分；只把 Top-K
+相关记忆注入模型。前端“记忆中心”支持确认、编辑、手动添加和永久遗忘。
 
 ## 阶段 2 已完成
 
@@ -106,15 +111,20 @@ Memory Writer 已作为 LangGraph 一等节点存在，当前写入范围是：
 - Neo4j 使用 Document、Chunk、Concept 与 PART_OF、MENTIONS 来源 Schema；前端“关系图”展示领域图谱，“思维导图”继续展示学习过程。
 - `backend/evals` 提供 30 条检索集和 Recall@5、MRR、nDCG@5 回归脚本。
 
+## 阶段 3 已完成
+
+- LangGraph SQLite Checkpoint 与 `resume=true` 节点级恢复。
+- 四个学习 Skills：概念讲解、公式推导、生成练习、错题复盘；先读取元数据，命中后再加载正文。
+- DeepStudy MCP Server：`search_course`、`query_concept_graph`、`create_quiz` Tools；课程大纲和概念 Resources；两个教学 Prompts。
+
 ## 当前仍未完成
 
-- 阶段 3：LangGraph 持久化 Checkpoint 与中断恢复、完整分层 Memory、Skills 运行时、DeepStudy MCP Server。
 - 多用户认证：当前仍使用 `anonymous`。
 - Verifier 已检查引用编号存在性，但还不是独立 LLM 事实核查器。
 
 ## 测试状态
 
-- 后端 pytest：24 条测试通过。
+- 后端 pytest：29 条测试通过，包含跨连接 checkpoint 持久化与失败节点恢复。
 - 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
 - 前端 ESLint 与 TypeScript/Vite production build 通过。
 - LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。
@@ -126,4 +136,6 @@ Memory Writer 已作为 LangGraph 一等节点存在，当前写入范围是：
 
 > 我用 LangGraph 把原来的线性 Orchestrator 重构成显式 Planner–Executor–Verifier 状态图，通过 Gemini 原生 Function Calling 连接计算器、学习画像、Neo4j 和课程检索工具，并用 SSE 将 Router、Planner、Tool、Verifier、Memory Writer 的安全执行摘要实时展示和持久化。
 
-暂时不要说“完整 GraphRAG、完整分层 Memory、Skills 和 MCP 已经完成”，这些属于后续阶段。
+可以进一步补充：
+
+> 阶段 3 将 Memory 做成了可进入推理主链路的分层系统：相关长期记忆先被检索并注入，回答通过验证后 Memory Writer 再保守写入；用户可以查看、修正和永久遗忘。运行时通过 SQLite Checkpoint 支持节点级恢复，并用 Skills 与 MCP 将教学工作流同时开放给内部 Agent 和外部 Host。

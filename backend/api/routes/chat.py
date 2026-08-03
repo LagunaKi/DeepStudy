@@ -57,7 +57,10 @@ async def chat(request: ChatRequest):
             raise HTTPException(status_code=400, detail="部分附件不存在或不属于当前会话")
 
         # 统一使用流式输出
-        if request.ref_fragment_id:
+        if request.resume:
+            logger.info("从 LangGraph checkpoint 恢复会话...")
+            token_stream = orchestrator.resume_query_stream(request.session_id)
+        elif request.ref_fragment_id:
             logger.info("处理划词追问（流式）...")
             token_stream = orchestrator.process_recursive_query_stream(
                 user_id=user_id,
@@ -78,16 +81,17 @@ async def chat(request: ChatRequest):
                 attachments=attachments,
             )
 
-        user_message = await add_message(
-            session_id=request.session_id,
-            user_id=user_id,
-            role="user",
-            content=request.query,
-            parent_id=request.parent_id,
-        )
-        await link_attachments_to_message(
-            request.attachment_ids, request.session_id, user_message["id"]
-        )
+        if not request.resume:
+            user_message = await add_message(
+                session_id=request.session_id,
+                user_id=user_id,
+                role="user",
+                content=request.query,
+                parent_id=request.parent_id,
+            )
+            await link_attachments_to_message(
+                request.attachment_ids, request.session_id, user_message["id"]
+            )
 
         async def stream_and_persist():
             answer_parts: list[str] = []

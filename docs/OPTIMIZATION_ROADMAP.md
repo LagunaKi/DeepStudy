@@ -244,7 +244,7 @@ MCP 用于向外部 Agent Host 暴露 DeepStudy 的工具和上下文；它不�
 
 ### 阶段 0：工程可信度
 
-- [ ] 轮换已暴露的 API Token（需要项目所有者在服务商控制台完成）。
+- [x] 轮换已暴露的 API Token（需要项目所有者在服务商控制台完成）。
 - [x] 删除代码中的硬编码密钥和密钥日志。
 - [x] 增加 `.env.example` 和严格忽略规则。
 - [x] 将默认 LLM 切换到 Gemini 3 Flash 免费 API 层。
@@ -300,11 +300,17 @@ Recall@5 1.0000、MRR 0.9444、nDCG@5 0.9587。该结果只用于回归，不代
 
 ### 阶段 3：Memory、Skills 与 MCP
 
-- [ ] LangGraph 会话 Checkpoint 与中断恢复。
-- [ ] 跨会话长期记忆。
-- [ ] Memory 查看和删除能力。
-- [ ] 四个 Agent Skills。
-- [ ] DeepStudy MCP Server。
+- [x] LangGraph 会话 Checkpoint 与中断恢复。
+- [x] 跨会话长期记忆。
+- [x] Memory 查看和删除能力。
+- [x] 四个 Agent Skills。
+- [x] DeepStudy MCP Server。
+
+实现说明：每个会话使用 SQLite LangGraph Checkpoint，可通过同一 `thread_id`
+从最后一个成功节点恢复；长期记忆分为 semantic 与 episodic，采用显式提取、
+哈希去重、置信度/重要度、时间衰减与相关性检索。前端记忆中心支持用户确认、
+编辑、手动添加和永久遗忘。Skills 在运行时先扫描 frontmatter 元数据，选中后才
+加载完整指令。MCP Server 暴露 3 个 Tools、2 个 Resources 与 2 个 Prompts。
 
 ### 阶段 4：作品集包装
 

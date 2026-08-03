@@ -1,0 +1,9 @@
+---
+name: generate-practice
+description: 根据主题和掌握度生成递进练习
+intents: concept, derivation, code
+triggers: 出题,练习题,测验,quiz,考考我
+---
+# 生成练习
+
+生成由易到难的少量题目，覆盖理解、推理和应用三个层次。先只给题目和必要条件，不立即泄露答案；用户作答后再逐题反馈。若已有学习画像，优先覆盖薄弱概念，并说明每题训练的能力。
