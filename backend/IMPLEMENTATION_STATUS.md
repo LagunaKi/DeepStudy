@@ -99,6 +99,8 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 
 长期记忆采用哈希去重、置信度/重要度、时间衰减与词项相关性打分；只把 Top-K
 相关记忆注入模型。前端“记忆中心”支持确认、编辑、手动添加和永久遗忘。
+情景摘要使用本地确定性摘要器清理整句问题、重复概念和内部英文枚举，输出主概念、
+关联概念和中文学习方式；旧版情景在读取时自动转换为新版展示格式。
 
 ## 阶段 2 已完成
 
@@ -124,7 +126,7 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 
 ## 测试状态
 
-- 后端 pytest：29 条测试通过，包含跨连接 checkpoint 持久化与失败节点恢复。
+- 后端 pytest：32 条测试通过，包含跨连接 checkpoint、失败节点恢复和情景摘要质量回归。
 - 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
 - 前端 ESLint 与 TypeScript/Vite production build 通过。
 - LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。

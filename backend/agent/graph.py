@@ -19,6 +19,7 @@ from backend.agent.state import AgentState, AgentTraceEvent
 from backend.agent.tools import ToolRegistry
 from backend.data.neo4j_client import neo4j_client
 from backend.data.profile_store import apply_learning_event_to_concepts
+from backend.memory.episode_summary import build_episode_summary
 from backend.memory.service import MemoryService, memory_service
 from backend.rag.service import rag_service
 
@@ -598,26 +599,29 @@ class DeepStudyAgentGraph:
                     "created": created,
                 })
             if state.get("verification_result", {}).get("passed") and concepts:
-                episode = (
-                    f"学习了{', '.join(concepts[:6])}；活动类型为 {activity}；"
-                    f"使用 Skill {state.get('active_skill') or 'default'}"
+                tool_names = [
+                    str(call.get("name"))
+                    for call in state.get("tool_calls", [])
+                    if call.get("name")
+                ]
+                episode = build_episode_summary(
+                    query=state["query"],
+                    concepts=concepts,
+                    activity=activity,
+                    skill=state.get("active_skill") or "default",
+                    tools=tool_names,
                 )
                 memory, created = await self.memory.upsert(
                     user_id=state["user_id"],
                     scope="episodic",
                     kind="learning_turn",
-                    content=episode,
+                    content=episode["content"],
                     source="agent",
                     source_session_id=state["session_id"],
                     source_conversation_id=state["conversation_id"],
                     confidence=0.85,
                     importance=0.55,
-                    metadata={
-                        "concepts": concepts[:12],
-                        "activity": activity,
-                        "skill": state.get("active_skill", ""),
-                        "tools": [call.get("name") for call in state.get("tool_calls", [])],
-                    },
+                    metadata={**episode, "query": state["query"][:300]},
                 )
                 updates.append({
                     "scope": "episodic",

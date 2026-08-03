@@ -12,6 +12,7 @@ from uuid import uuid4
 
 from backend.data.rag_store import lexical_terms
 from backend.data.sqlite_db import get_db_connection
+from backend.memory.episode_summary import improve_legacy_episode
 
 
 def _now() -> str:
@@ -148,7 +149,7 @@ class MemoryService:
                 """,
                 values,
             )
-            return [_decode(row) for row in await cursor.fetchall()]
+            return [improve_legacy_episode(_decode(row)) for row in await cursor.fetchall()]
 
     async def retrieve(
         self,
