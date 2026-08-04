@@ -15,6 +15,9 @@ from backend.rag.embeddings import EmbeddingService, embedding_service
 
 logger = logging.getLogger(__name__)
 RRF_K = 60
+LEXICAL_RRF_WEIGHT = 1.5
+DENSE_RRF_WEIGHT = 1.0
+GRAPH_RRF_WEIGHT = 0.7
 
 
 class RAGService:
@@ -129,16 +132,18 @@ class RAGService:
         fused: dict[str, dict[str, Any]] = {}
         for rank, row in enumerate(lexical, start=1):
             item = fused.setdefault(row["id"], {"row": row, "score": 0.0, "signals": {}})
-            item["score"] += 1 / (RRF_K + rank)
+            # Course questions often contain exact theorem names or symbols. Give the
+            # lexical signal a modest lead while retaining dense recall for paraphrases.
+            item["score"] += LEXICAL_RRF_WEIGHT / (RRF_K + rank)
             item["signals"]["bm25_rank"] = rank
         for rank, (similarity, row) in enumerate(dense, start=1):
             item = fused.setdefault(row["id"], {"row": row, "score": 0.0, "signals": {}})
-            item["score"] += 1 / (RRF_K + rank)
+            item["score"] += DENSE_RRF_WEIGHT / (RRF_K + rank)
             item["signals"]["vector_rank"] = rank
             item["signals"]["vector_score"] = round(similarity, 4)
         for rank, chunk_id in enumerate(graph_ids, start=1):
             if chunk_id in fused:
-                fused[chunk_id]["score"] += 0.7 / (RRF_K + rank)
+                fused[chunk_id]["score"] += GRAPH_RRF_WEIGHT / (RRF_K + rank)
                 fused[chunk_id]["signals"]["graph_rank"] = rank
 
         query_terms = set(rag_store.lexical_terms(query))

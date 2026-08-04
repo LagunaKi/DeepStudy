@@ -2,9 +2,11 @@
 
 基于 LangGraph 与 Gemini 3 Flash 的递归学习 Agent：支持 Function Calling、Agent Trace、GraphRAG、分层 Memory、Skills 与 MCP。
 
-> 当前正在从黑客松 Demo 升级为基于 LangGraph、GraphRAG 与分层记忆的
-> 自适应学习 Agent。完整方案见
-> [优化路线图](docs/OPTIMIZATION_ROADMAP.md)。
+核心 Agent、RAG、Memory 与作品集包装四个阶段均已完成。实现边界与仍未完成项见
+[实现状态](backend/IMPLEMENTATION_STATUS.md)，完整演进见
+[优化路线图](docs/OPTIMIZATION_ROADMAP.md)。
+
+![DeepStudy 90 秒功能演示](docs/assets/deepstudy-demo-90s.gif)
 
 ## 技术栈
 
@@ -13,6 +15,35 @@
 - **模型**: Gemini 3 Flash（Gemini Developer API 免费层）
 - **数据库**: Neo4j（对话与知识图谱）+ SQLite（用户数据与学习画像）
 - **认证**: 当前单用户场景（anonymous），JWT 预留
+
+## 系统架构
+
+```mermaid
+flowchart LR
+    UI["React 学习工作台"] --> SSE["FastAPI / SSE"]
+    SSE --> Graph["LangGraph Agent Runtime"]
+    Graph --> Router["Router + Planner"]
+    Router --> Model["Gemini Function Calling"]
+    Model <--> Tools["课程检索 · 知识图谱 · 计算器 · 学习画像"]
+    Tools --> Verify["Verifier"]
+    Verify --> Tutor["Tutor Answer + Sources"]
+    Tutor --> UI
+    Verify --> Memory["Memory Writer"]
+    Memory --> SQLite["SQLite 会话 · Checkpoint · 长期记忆"]
+    Memory --> Neo4j["Neo4j 知识图谱 · 学习事件"]
+```
+
+## 功能矩阵
+
+| 能力 | 实现 | 用户可见证据 | 降级策略 |
+| --- | --- | --- | --- |
+| Agent 编排 | LangGraph Router–Planner–Executor–Verifier | SSE Agent Trace 与历史回放 | 路由、验证使用本地确定性逻辑 |
+| Tool Calling | Gemini 原生 Function Calling + Pydantic Schema | 工具名、参数摘要、耗时与结果 | 单轮工具循环，避免免费额度失控 |
+| RAG | PDF/Markdown/TXT/代码结构化切片 | 页码、章节、可点击原文 | BGE 不可用时使用确定性 n-gram embedding |
+| GraphRAG | BM25 + 向量 + Neo4j，经加权 RRF 与覆盖率重排 | 学习思维导图 / 知识关系图 | Neo4j 不可用时保留关键词与向量检索 |
+| 分层 Memory | 会话、Checkpoint、语义/情景记忆、U/R/A 画像 | 记忆中心可确认、编辑、永久遗忘 | 仅写入通过验证且达到阈值的记忆 |
+| 多模态 | 图片直达 Gemini；文档进入索引任务 | 粘贴/上传、解析进度、失败原因 | 格式、大小与解析错误分层提示 |
+| Skills / MCP | 4 个渐进加载 Skills；3 Tools、2 Resources、2 Prompts | Trace 显示命中 Skill，外部 Host 可复用 | 独立于主 Agent 运行时，可单独停用 |
 
 ## 项目结构
 
@@ -160,7 +191,30 @@ make compose-config
 
 # 30 条检索回归集（输出 Recall@5、MRR、nDCG@5）
 python -m backend.evals.run_rag_eval
+
+# 旧版向量单路 vs 当前混合检索的可复现对比
+python -m backend.evals.run_rag_eval --compare
+
+# 重新生成恰好 90 秒的演示 GIF
+make portfolio
 ```
+
+30 条仓库内课程查询的确定性离线回归结果：
+
+| 检索方案 | Recall@5 | MRR | nDCG@5 |
+| --- | ---: | ---: | ---: |
+| 旧版向量单路 | 1.0000 | 0.9444 | 0.9587 |
+| 加权 BM25 + 向量 RRF + 覆盖率重排 | 1.0000 | 0.9667 | 0.9754 |
+| 变化 | +0.0000 | +0.0223 | +0.0167 |
+
+这是固定 fixture 上的代码回归基线，不代表真实用户资料上的泛化质量。演示流程、
+截图、三分钟讲稿和简历表述见 [作品集说明](docs/PORTFOLIO.md)。
+
+## Agent Trace
+
+![课程资料问答的 Agent Trace](docs/assets/agent-trace-final.jpg)
+
+Trace 只展示计划、工具、证据和验证结果等安全摘要，不展示模型私有推理过程。
 
 ## 开发规范
 

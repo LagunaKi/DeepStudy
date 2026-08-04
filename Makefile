@@ -1,4 +1,4 @@
-.PHONY: setup dev-backend dev-frontend test build compose-config up down
+.PHONY: setup dev-backend dev-frontend test build eval portfolio compose-config up down
 
 setup:
 	@test -f backend/.env || cp .env.example backend/.env
@@ -17,6 +17,12 @@ test:
 build:
 	npm --prefix frontend run build
 	python -m compileall -q backend
+
+eval:
+	python -m backend.evals.run_rag_eval --compare
+
+portfolio:
+	python docs/build_demo_gif.py
 
 compose-config:
 	docker compose config --quiet

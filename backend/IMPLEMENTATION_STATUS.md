@@ -119,6 +119,13 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 - 四个学习 Skills：概念讲解、公式推导、生成练习、错题复盘；先读取元数据，命中后再加载正文。
 - DeepStudy MCP Server：`search_course`、`query_concept_graph`、`create_quiz` Tools；课程大纲和概念 Resources；两个教学 Prompts。
 
+## 阶段 4 已完成
+
+- README 增加实际架构图、功能/降级矩阵、Agent Trace 截图与离线评测对比。
+- 基于真实本地界面生成 21 帧、1280×720、总时长恰好 90 秒的演示 GIF，并提供可复现构建脚本。
+- `docs/PORTFOLIO.md` 收录 90 秒分镜、三分钟面试演示稿、截图、简历中英文表述和项目诚实边界。
+- 检索评测增加旧版确定性向量单路与当前加权混合检索的 `--compare` 对比；固定 30 条集上 MRR 从 0.9444 提升到 0.9667，nDCG@5 从 0.9587 提升到 0.9754。
+
 ## 当前仍未完成
 
 - 多用户认证：当前仍使用 `anonymous`。
@@ -130,7 +137,7 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 - 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
 - 前端 ESLint 与 TypeScript/Vite production build 通过。
 - LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。
-- RAG 离线 fixture：30 条查询，Recall@5 1.0000、MRR 0.9444、nDCG@5 0.9587；仅作为代码回归基线。
+- RAG 离线 fixture：30 条查询，Recall@5 1.0000、MRR 0.9667、nDCG@5 0.9754；仅作为代码回归基线。
 
 ## 面试口径
 
@@ -141,3 +148,7 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 可以进一步补充：
 
 > 阶段 3 将 Memory 做成了可进入推理主链路的分层系统：相关长期记忆先被检索并注入，回答通过验证后 Memory Writer 再保守写入；用户可以查看、修正和永久遗忘。运行时通过 SQLite Checkpoint 支持节点级恢复，并用 Skills 与 MCP 将教学工作流同时开放给内部 Agent 和外部 Host。
+
+作品集收束可以说：
+
+> 我用真实界面制作了 90 秒可复现演示，并把 Agent 能力、降级边界和离线评测放在同一份 README 中。固定 30 条回归集上，加权混合检索相对确定性向量单路将 MRR 提升 0.0223、nDCG@5 提升 0.0167；同时明确这些数字不代表真实用户资料上的泛化质量。
