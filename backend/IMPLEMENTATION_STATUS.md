@@ -46,7 +46,7 @@ START
   -> END
 ```
 
-Router 使用本地确定性规则区分 `concept`、`derivation`、`code`，不再固定返回 `CONCEPT`，也不会为路由额外消耗免费模型额度。Planner 生成可展示的步骤摘要和建议工具。Verifier 当前是确定性完整性与工具结果检查，不额外调用 LLM。
+Router 使用本地确定性规则覆盖 11 类意图：概念辨析、推导证明、代码调试、解题辅导、总结复习、出题自测、学习画像、课程查考、闲聊、上下文追问和安全边界。路由返回类别、置信度与命中信号供 Trace 展示，不额外消耗免费模型额度；Planner、Prompt、工具建议、上下文检索和 Memory 写入策略会随意图调整。Verifier 当前是确定性完整性与工具结果检查，不额外调用 LLM。
 
 ### Gemini Function Calling
 
@@ -133,7 +133,7 @@ Memory Retriever 与 Memory Writer 都是 LangGraph 一等节点，当前分为�
 
 ## 测试状态
 
-- 后端 pytest：32 条测试通过，包含跨连接 checkpoint、失败节点恢复和情景摘要质量回归。
+- 后端 pytest：46 条测试通过，包含 11 类意图路由、歧义消解、跨连接 checkpoint、失败节点恢复和情景摘要质量回归。
 - 新增覆盖：真实任务路由、Planner 工具建议、LangGraph 工具循环、普通问题单次模型请求、Gemini 手动 Function Calling、Trace SQLite 持久化。
 - 前端 ESLint 与 TypeScript/Vite production build 通过。
 - LangGraph 固定为 `>=1.2,<2.0`，实际启动虚拟环境已验证 1.2.10。

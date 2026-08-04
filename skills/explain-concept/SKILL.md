@@ -1,7 +1,7 @@
 ---
 name: explain-concept
 description: 用直觉、定义、例子与误区讲清概念
-intents: concept
+intents: concept, review, follow_up, course_retrieval
 triggers: 什么是,解释,讲解,区别,原理
 ---
 # 概念讲解

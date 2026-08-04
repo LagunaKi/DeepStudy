@@ -13,6 +13,7 @@ from langgraph.types import StreamWriter
 
 from backend.agent.activity_classifier import classify_activity
 from backend.agent.concept_extractor import extract_concept_structure
+from backend.agent.intent_router import classify_intent
 from backend.agent.model_provider import AgentModelProvider
 from backend.agent.skills import SkillCatalog, skill_catalog
 from backend.agent.state import AgentState, AgentTraceEvent
@@ -26,6 +27,36 @@ from backend.rag.service import rag_service
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 1
+NO_RETRIEVAL_INTENTS = frozenset({"chitchat", "safety", "learning_profile"})
+NO_MEMORY_WRITE_INTENTS = frozenset({"chitchat", "safety", "learning_profile", "quiz"})
+
+INTENT_PLAN_STEPS = {
+    "concept": "按直觉、定义、示例和易错点组织讲解",
+    "derivation": "逐步组织推导并检查前提、符号与关键等式",
+    "code": "组织可运行代码、调试步骤与边界情况",
+    "problem_solving": "拆解题意、选择解法并分步验证",
+    "review": "提取核心知识点并组织复习提纲",
+    "quiz": "按掌握度生成递进题目且暂不泄露答案",
+    "learning_profile": "读取学习画像并给出有依据的下一步路径",
+    "course_retrieval": "定位课程资料原文并保留页码或章节来源",
+    "chitchat": "简短回应并自然引导回学习目标",
+    "follow_up": "结合上文消解指代并回答当前追问",
+    "safety": "说明边界并提供安全、学习相关的替代方向",
+}
+
+INTENT_INSTRUCTIONS = {
+    "concept": "用直觉、准确定义、例子和常见误区帮助学习者理解。",
+    "derivation": "逐步推导，声明前提与符号，说明每一步依据并核对结论。",
+    "code": "提供可运行代码、定位错误原因，并覆盖必要的边界情况与验证方法。",
+    "problem_solving": "先提取已知与目标，再选择方法分步求解；解释选择依据，不只报答案。",
+    "review": "按主题提炼核心知识、关键联系和易错点，形成便于复习的结构化摘要。",
+    "quiz": "根据主题和掌握度给少量递进题目，先不泄露答案，等待用户作答后再反馈。",
+    "learning_profile": "只根据真实学习画像、记忆和图谱证据判断进度，给出可执行的下一步计划。",
+    "course_retrieval": "优先依据课程资料定位答案，清楚标注来源；证据不足时直接说明。",
+    "chitchat": "简洁友好地回应身份或寒暄，不编造个人身份，并自然引导到学习任务。",
+    "follow_up": "结合上一段回答、选中文本和会话历史解析省略与代词；上下文不足时先澄清。",
+    "safety": "礼貌拒绝有害或明显偏离学习目标的请求，并提供安全且与学习相关的替代帮助。",
+}
 
 
 def _now() -> str:
@@ -54,37 +85,18 @@ def _trace(
     return event
 
 
-def route_intent(query: str) -> str:
-    """无额外模型调用的真实任务路由。"""
-    normalized = query.lower()
-    code_keywords = (
-        "代码",
-        "编程",
-        "python",
-        "javascript",
-        "typescript",
-        "java",
-        "c++",
-        "报错",
-        "bug",
-        "函数实现",
-        "算法实现",
-    )
-    derivation_keywords = (
-        "推导",
-        "证明",
-        "公式",
-        "为什么成立",
-        "计算过程",
-        "求解",
-        "derive",
-        "prove",
-    )
-    if any(keyword in normalized for keyword in code_keywords):
-        return "code"
-    if any(keyword in normalized for keyword in derivation_keywords):
-        return "derivation"
-    return "concept"
+def route_intent(
+    query: str,
+    *,
+    has_context: bool = False,
+    has_attachments: bool = False,
+) -> str:
+    """兼容旧调用方的字符串接口；分类本身集中在 ``intent_router``。"""
+    return classify_intent(
+        query,
+        has_context=has_context,
+        has_attachments=has_attachments,
+    ).intent.value
 
 
 def build_plan(query: str, intent: str) -> tuple[list[str], list[str]]:
@@ -106,21 +118,32 @@ def build_plan(query: str, intent: str) -> tuple[list[str], list[str]]:
         tools.append("search_course_materials")
         steps.append("检索课程资料证据")
 
-    intent_step = {
-        "code": "组织可运行代码与关键说明",
-        "derivation": "逐步组织推导并检查关键等式",
-        "concept": "按直觉、定义、示例和易错点组织讲解",
-    }[intent]
+    if intent == "learning_profile":
+        tools.append("get_learning_profile")
+        steps.append("读取学习画像与练习记录")
+    elif intent == "course_retrieval":
+        tools.append("search_course_materials")
+        steps.append("定位课程资料中的原文证据")
+    elif intent == "quiz":
+        tools.append("get_learning_profile")
+        steps.append("读取掌握度以调整题目难度")
+    if intent == "learning_profile" and any(
+        word in normalized for word in ("下一步", "学习路径", "前置知识")
+    ):
+        tools.append("query_concept_graph")
+        steps.append("查询前置知识与概念关系")
+
+    tools = list(dict.fromkeys(tools))
+    steps = list(dict.fromkeys(steps))
+    intent_step = INTENT_PLAN_STEPS.get(intent, INTENT_PLAN_STEPS["concept"])
     steps.extend([intent_step, "验证答案覆盖度与工具结果"])
     return steps, tools
 
 
 def _system_instruction(state: AgentState) -> str:
-    intent_instruction = {
-        "code": "提供可运行代码、关键逻辑和必要的边界情况。",
-        "derivation": "逐步推导，说明每一步依据，并核对符号与结论。",
-        "concept": "用直觉、准确定义、例子和常见误区帮助学习者理解。",
-    }[state["intent"]]
+    intent_instruction = INTENT_INSTRUCTIONS.get(
+        state["intent"], INTENT_INSTRUCTIONS["concept"]
+    )
     plan = "；".join(state.get("task_plan", []))
     recommended = state.get("recommended_tools", [])
     tool_hint = "、".join(recommended) if recommended else "无强制工具"
@@ -203,6 +226,21 @@ def _to_gemini_contents(state: AgentState) -> list[types.Content]:
     return contents
 
 
+def _contextual_query(state: AgentState) -> str:
+    """为短追问补足检索上下文，不修改用户最终看到的问题。"""
+    query = state["query"]
+    if state.get("intent") != "follow_up":
+        return query
+    context = (state.get("selected_text") or state.get("parent_context") or "").strip()
+    if not context:
+        for message in reversed(state.get("messages", [])[:-1]):
+            content = str(message.get("content") or "").strip()
+            if content:
+                context = content
+                break
+    return f"{context[-800:]}\n{query}" if context else query
+
+
 class DeepStudyAgentGraph:
     """组装并运行 DeepStudy 的显式 LangGraph 状态机。"""
 
@@ -248,23 +286,47 @@ class DeepStudyAgentGraph:
         return builder.compile(checkpointer=self.checkpointer, name="deepstudy-agent")
 
     async def _router(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
-        intent = route_intent(state["query"])
-        labels = {"code": "代码实现", "derivation": "推导求解", "concept": "概念讲解"}
+        has_context = bool(
+            state.get("selected_text")
+            or state.get("parent_context")
+            or state.get("parent_id")
+            or len(state.get("messages", [])) > 1
+        )
+        decision = classify_intent(
+            state["query"],
+            has_context=has_context,
+            has_attachments=bool(state.get("attachments")),
+        )
+        intent = decision.intent.value
         _trace(
             writer,
             node="router",
             title="Router · 任务路由",
-            summary=f"识别为{labels[intent]}任务",
-            details={"intent": intent},
+            summary=f"识别为{decision.label}任务",
+            details={
+                "intent": intent,
+                "category": decision.category,
+                "confidence": decision.confidence,
+                "signals": list(decision.signals),
+            },
         )
         return {"intent": intent}
 
     async def _memory_retriever(
         self, state: AgentState, writer: StreamWriter
     ) -> dict[str, Any]:
+        if state.get("intent") in {"chitchat", "safety"}:
+            _trace(
+                writer,
+                node="memory_retriever",
+                title="Memory Retriever · 相关记忆",
+                summary="当前意图无需注入长期学习记忆",
+                details={"count": 0, "skipped": True},
+            )
+            return {"relevant_memories": []}
         try:
             memories = await self.memory.retrieve(
-                state["query"],
+                _contextual_query(state),
                 user_id=state["user_id"],
                 current_session_id=state["session_id"],
                 top_k=5,
@@ -322,6 +384,8 @@ class DeepStudyAgentGraph:
         }
 
     async def _retriever(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
+        if state.get("intent") in NO_RETRIEVAL_INTENTS:
+            return {"retrieved_evidence": []}
         document_ids = list(
             dict.fromkeys(
                 str(item["document_id"])
@@ -331,7 +395,7 @@ class DeepStudyAgentGraph:
         )
         try:
             items = await rag_service.search(
-                state["query"],
+                _contextual_query(state),
                 user_id=state["user_id"],
                 session_id=state["session_id"],
                 document_ids=document_ids or None,
@@ -358,7 +422,10 @@ class DeepStudyAgentGraph:
 
     async def _agent_model(self, state: AgentState, writer: StreamWriter) -> dict[str, Any]:
         contents = state.get("model_contents") or _to_gemini_contents(state)
-        allow_tools = state.get("tool_rounds", 0) < MAX_TOOL_ROUNDS
+        allow_tools = (
+            state.get("tool_rounds", 0) < MAX_TOOL_ROUNDS
+            and state.get("intent") not in {"chitchat", "safety"}
+        )
         _trace(
             writer,
             node="agent_model",
@@ -547,6 +614,15 @@ class DeepStudyAgentGraph:
     async def _memory_writer(
         self, state: AgentState, writer: StreamWriter
     ) -> dict[str, Any]:
+        if state.get("intent") in NO_MEMORY_WRITE_INTENTS:
+            _trace(
+                writer,
+                node="memory_writer",
+                title="Memory Writer · 学习记忆",
+                summary="当前意图不代表新的学习表现，本轮不更新画像或长期记忆",
+                details={"skipped": True, "intent": state.get("intent")},
+            )
+            return {"memory_updates": []}
         answer = state.get("answer", "")
         structure = extract_concept_structure(state["query"], answer)
         root = str(structure.get("root") or "").strip()

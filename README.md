@@ -67,6 +67,7 @@ DeepStudy/
 
 - **流式对话**：首轮提问与划词追问均支持流式输出。
 - **Agent 主链路**：Router → Planner → Gemini Function Calling → Tool Executor → Verifier → Memory Writer。
+- **教育意图路由**：本地可解释规则覆盖概念、推导、代码、解题、总结、自测、学习画像、课程查考、闲聊、上下文追问和安全边界 11 类意图，不额外消耗模型额度。
 - **Agent Trace**：通过标准 SSE 实时展示节点、工具参数摘要与验证结果，并随历史消息持久化。
 - **RAG / GraphRAG**：课程资料经过结构化切片、BM25 + 向量 + 图谱融合检索与重排，回答展示页码、章节和可点击来源。
 - **多模态附件**：支持直接粘贴图片，也支持上传图片、PDF、Markdown、TXT 与常见代码文件；图片直接交给 Gemini 理解，文档显示解析/索引进度。

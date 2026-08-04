@@ -1,7 +1,7 @@
 ---
 name: review-mistakes
 description: 分析错因并生成针对性复习路径
-intents: concept, derivation, code
+intents: problem_solving
 triggers: 错题,做错,为什么错,复盘,纠错
 ---
 # 错题复盘

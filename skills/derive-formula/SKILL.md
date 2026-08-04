@@ -1,7 +1,7 @@
 ---
 name: derive-formula
 description: 按前提、变换依据和结论组织公式推导
-intents: derivation
+intents: derivation, problem_solving
 triggers: 推导,证明,公式,计算过程,求解
 ---
 # 公式推导

@@ -1,7 +1,7 @@
 ---
 name: generate-practice
 description: 根据主题和掌握度生成递进练习
-intents: concept, derivation, code
+intents: quiz
 triggers: 出题,练习题,测验,quiz,考考我
 ---
 # 生成练习

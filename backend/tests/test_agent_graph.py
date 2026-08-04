@@ -107,10 +107,18 @@ def test_router_and_planner_are_real_and_deterministic() -> None:
     assert route_intent("用 Python 实现二分查找") == "code"
     assert route_intent("请推导二次求根公式") == "derivation"
     assert route_intent("什么是 RAG") == "concept"
+    assert route_intent("帮我总结第三章的重点") == "review"
+    assert route_intent("下一步呢？", has_context=True) == "follow_up"
 
     plan, tools = build_plan("计算 12 * (3 + 2) 等于多少", "concept")
     assert "calculate_expression" in tools
     assert any("计算器" in step for step in plan)
+
+    profile_plan, profile_tools = build_plan(
+        "分析我的薄弱点并推荐下一步学习路径", "learning_profile"
+    )
+    assert {"get_learning_profile", "query_concept_graph"} <= set(profile_tools)
+    assert any("学习画像" in step for step in profile_plan)
 
 
 def test_langgraph_runs_function_calling_tool_loop_and_trace() -> None:
@@ -160,3 +168,21 @@ def test_retrieved_evidence_emits_sources_and_valid_citation() -> None:
     )
     verifier = next(event for event in events if event.get("node") == "verifier")
     assert verifier["details"]["citations_valid"] is True
+
+
+def test_control_intents_skip_irrelevant_retrieval_and_memory_writes() -> None:
+    runtime = DeepStudyAgentGraph(FakeProvider(use_tool=False))
+    trace: list[dict[str, Any]] = []
+    state = _state("你好")
+    state["intent"] = "chitchat"
+
+    async def scenario() -> tuple[dict[str, Any], dict[str, Any]]:
+        retrieval = await runtime._retriever(state, trace.append)
+        memory = await runtime._memory_writer(state, trace.append)
+        return retrieval, memory
+
+    retrieval, memory = asyncio.run(scenario())
+    assert retrieval == {"retrieved_evidence": []}
+    assert memory == {"memory_updates": []}
+    memory_event = next(event for event in trace if event.get("node") == "memory_writer")
+    assert memory_event["details"] == {"skipped": True, "intent": "chitchat"}

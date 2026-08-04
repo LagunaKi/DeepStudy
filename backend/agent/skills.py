@@ -64,9 +64,7 @@ class SkillCatalog:
         if not scored:
             return None
         score, selected = max(scored, key=lambda item: (item[0], item[1].name == "explain-concept"))
-        return selected if score > 0 else next(
-            (item for item in self._metadata if item.name == "explain-concept"), selected
-        )
+        return selected if score > 0 else None
 
     @staticmethod
     def load_instructions(skill: SkillMetadata) -> str:
